@@ -1,0 +1,18 @@
+2026/05/04-20:27:15.707 2fe8 Reusing MANIFEST C:\Users\KARANAM SAI\Desktop\oneserve\sessions\wpp\69eeec96f49141147a2e547b\Default\Local Storage\leveldb/MANIFEST-000001
+2026/05/04-20:27:15.746 2fe8 Recovering log #3
+2026/05/04-20:27:15.755 2fe8 Reusing old log C:\Users\KARANAM SAI\Desktop\oneserve\sessions\wpp\69eeec96f49141147a2e547b\Default\Local Storage\leveldb/000003.log 
+2026/05/04-21:32:36.472 6e8 Level-0 table #5: started
+2026/05/04-21:32:36.486 6e8 Level-0 table #5: 19565 bytes OK
+2026/05/04-21:32:36.494 6e8 Delete type=0 #3
+2026/05/04-22:01:16.551 6e8 Level-0 table #7: started
+2026/05/04-22:01:16.567 6e8 Level-0 table #7: 11904 bytes OK
+2026/05/04-22:01:16.575 6e8 Delete type=0 #4
+2026/05/04-22:21:16.544 6e8 Level-0 table #9: started
+2026/05/04-22:21:16.558 6e8 Level-0 table #9: 14532 bytes OK
+2026/05/04-22:21:16.564 6e8 Delete type=0 #6
+2026/05/04-22:55:02.401 6e8 Level-0 table #11: started
+2026/05/04-22:55:02.432 6e8 Level-0 table #11: 18886 bytes OK
+2026/05/04-22:55:02.439 6e8 Delete type=0 #8
+2026/05/04-23:10:16.549 6e8 Level-0 table #13: started
+2026/05/04-23:10:16.592 6e8 Level-0 table #13: 21479 bytes OK
+2026/05/04-23:10:16.600 6e8 Delete type=0 #10
