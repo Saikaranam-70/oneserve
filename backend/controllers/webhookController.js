@@ -7,9 +7,11 @@ const verifyWebhook = (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
+  const { businessId } = req.params;
 
-  if (mode === 'subscribe' && token === process.env.META_VERIFY_TOKEN) {
-    console.log('✅ Webhook verified');
+  // The user specifies their respective business ID as the verify token
+  if (mode === 'subscribe' && token === businessId) {
+    console.log(`✅ Webhook verified for business: ${businessId}`);
     return res.status(200).send(challenge);
   }
   res.status(403).json({ success: false, message: 'Forbidden' });
