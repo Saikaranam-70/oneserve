@@ -853,7 +853,12 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
     // ═══════════════════════════════════════════
     if (state === 'idle' && (!customer.name || customer.name === 'Customer')) {
       await setState(businessId, waId, 'awaiting_name');
-      return reply(`👋 Welcome to *${business.name}*!\n\nBefore we get started, could you tell us your name?`);
+      return replyBtns(
+        null,
+        `👋 Welcome to *${business.name}*!\n\nBefore we get started, could you tell us your name?`,
+        null,
+        [] // no buttons — wait for text
+      ).catch(() => reply(`👋 Welcome to *${business.name}*!\n\nCould you please tell us your name?`));
     }
 
     if (state === 'awaiting_name') {

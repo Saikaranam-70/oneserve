@@ -4,6 +4,7 @@
   "description": "OneServe - WhatsApp Commerce OS Backend",
   "main": "server.js",
   "scripts": {
+    "preinstall": "rm -rf /opt/render/.cache/puppeteer || true",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
