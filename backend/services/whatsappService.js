@@ -199,13 +199,15 @@ const sendMetaMessage = async (business, toWaId, payload) => {
     const token = business.whatsapp.metaToken || process.env.META_WA_TOKEN;
     if (!phoneNumberId || !token) throw new Error('Meta credentials missing');
 
-    await axios.post(
+    const res = await axios.post(
       `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`,
       { messaging_product: 'whatsapp', to: toWaId, ...payload },
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
+    console.log("✅ Meta message sent successfully!");
   } catch (err) {
     console.error('Meta send error:', err.response?.data || err.message);
+    throw err;
   }
 };
 
