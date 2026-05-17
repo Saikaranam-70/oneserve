@@ -200,7 +200,7 @@ const sendMetaMessage = async (business, toWaId, payload) => {
     if (!phoneNumberId || !token) throw new Error('Meta credentials missing');
 
     await axios.post(
-      `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
+      `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`,
       { messaging_product: 'whatsapp', to: toWaId, ...payload },
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
