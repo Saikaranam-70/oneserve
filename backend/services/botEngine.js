@@ -1416,7 +1416,6 @@
 
 
 
-
 /**
  * OneServe Bot Engine — botEngine.js
  * Clean state machine for WhatsApp ordering flow.
@@ -1742,10 +1741,22 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
     // Must have text or location
     if (!text && !location) return;
 
-    // ── Atomic deduplication (single Redis call) ──
+    // ── Atomic deduplication — two layers ──
+    // Layer 1: message-level (same msgId never processed twice)
     if (msgId) {
       const isNew = await redis.set(K.dedup(msgId), '1', { nx: true, ex: TTL.dedup });
-      if (!isNew) return;
+      if (!isNew) {
+        console.log('⚠️ Duplicate msgId dropped:', msgId);
+        return;
+      }
+    }
+    // Layer 2: action-level lock (waId + text combo, 5s window)
+    // Prevents race when Meta delivers the same button press twice with different msgIds
+    const actionKey = `lock:${businessId}:${waId}:${lower.substring(0, 30)}`;
+    const actionNew = await redis.set(actionKey, '1', { nx: true, ex: 5 });
+    if (!actionNew) {
+      console.log('⚠️ Duplicate action dropped:', lower);
+      return;
     }
 
     // ── Load business (cached 5 min) ──
@@ -1966,10 +1977,10 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
     if (state === 'item_added') {
       const cart = await getCart(businessId, waId);
 
-      const isMore = ['cart_more', '1', 'add more', 'more'].some(k => lower.includes(k));
-      const isViewCart = ['view_cart', '2', 'cart', 'view cart'].some(k => lower.includes(k));
-      const isCheckout = ['cart_checkout', '3', 'checkout'].some(k => lower.includes(k));
-      const isClear = ['cart_clear', 'clear'].some(k => lower.includes(k));
+      const isMore = lower === 'cart_more' || lower === '1' || lower === 'add more' || lower === 'more';
+      const isCheckout = lower === 'cart_checkout' || lower === '3' || lower === 'checkout';
+      const isClear = lower === 'cart_clear' || lower === 'clear';
+      const isViewCart = lower === 'view_cart' || lower === '2' || lower === 'cart';
 
       if (isMore) {
         const categories = safeParse(await redis.get(K.cats(businessId, waId)), []);
