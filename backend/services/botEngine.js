@@ -1825,6 +1825,14 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
 
     let state = await getState(businessId, waId);
 
+    // ── Strict Idle Check ──
+    // If the bot is idle, it should ONLY wake up if the user explicitly uses a trigger word.
+    // This prevents Meta from sending messages for arbitrary events/status updates.
+    if (state === 'idle' && !resets.includes(lower)) {
+      console.log(`⚠️ User ${waId} sent non-trigger word while idle. Ignoring.`);
+      return;
+    }
+
     // ══════════════════════════════════════════
     // ONBOARDING
     // ══════════════════════════════════════════
