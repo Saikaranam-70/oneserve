@@ -1686,6 +1686,38 @@ const showDeliveryOptions = (business, waId) => {
   );
 };
 
+/** Coupon Prompt */
+const showCouponsPrompt = async (business, waId, prefixText = '') => {
+  const coupons = await Coupon.find({ business: business._id, isActive: true }).lean();
+  if (!coupons.length) {
+    return sendWhatsAppButtons(
+      business, waId,
+      '🎟️ Discount Coupon',
+      `${prefixText ? prefixText + '\n\n' : ''}Have a discount coupon? Type the code below, or tap Skip.`,
+      null,
+      [{ id: 'coupon_skip', title: '⏭️ Skip' }]
+    );
+  }
+
+  const textBody = `${prefixText ? prefixText + '\n\n' : ''}*Available Coupons:*\n` +
+    coupons.map(c => `🏷️ *${c.code}*: ${c.discountType === 'percentage' ? c.discountValue + '%' : '₹' + c.discountValue} OFF (Min: ₹${c.minOrderValue})`).join('\n') +
+    '\n\nType the code, or tap Skip.';
+
+  const buttons = [];
+  if (coupons.length <= 2) {
+    coupons.forEach(c => buttons.push({ id: `cpn_${c.code.toLowerCase()}`, title: c.code }));
+  }
+  buttons.push({ id: 'coupon_skip', title: '⏭️ Skip' });
+
+  return sendWhatsAppButtons(
+    business, waId,
+    '🎟️ Discount Coupon',
+    textBody,
+    null,
+    buttons
+  );
+};
+
 /** Build and show order summary + payment options */
 const showPaymentOptions = async (business, waId, cart, locData, couponData) => {
   const subtotal = cartTotal(cart);
@@ -1817,9 +1849,9 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
     }
 
     if (state === 'welcome') {
-      const isBrowse = ['menu_browse', '1', 'browse', 'menu', 'order'].some(k => lower.includes(k));
-      const isTrack = ['menu_track', '2', 'track'].some(k => lower.includes(k));
-      const isSupport = ['menu_support', '3', 'support', 'help', 'talk'].some(k => lower.includes(k));
+      const isBrowse = lower === 'menu_browse' || lower === '1' || lower === 'menu' || lower.includes('browse') || lower.includes('order');
+      const isTrack = lower === 'menu_track' || lower === '2' || lower.includes('track');
+      const isSupport = lower === 'menu_support' || lower === '3' || lower.includes('support') || lower.includes('talk') || lower.includes('help');
 
       if (isBrowse) {
         const categories = await Product.distinct('category', { business: businessId, isAvailable: true });
@@ -2011,8 +2043,8 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
     // CHECKOUT — DELIVERY TYPE
     // ══════════════════════════════════════════
     if (state === 'checkout_delivery') {
-      const isHome = ['delivery_home', '1', 'home', 'delivery'].some(k => lower.includes(k));
-      const isPickup = ['delivery_pickup', '2', 'pickup', 'self'].some(k => lower.includes(k));
+      const isHome = lower === 'delivery_home' || lower === '1' || lower.includes('home');
+      const isPickup = lower === 'delivery_pickup' || lower === '2' || lower.includes('pickup') || lower.includes('self');
 
       if (isHome) {
         await setState(businessId, waId, 'checkout_address');
@@ -2021,12 +2053,7 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
       } else if (isPickup) {
         await setLoc(businessId, waId, { type: 'pickup', address: 'Self Pickup' });
         await setState(businessId, waId, 'checkout_coupon');
-        return replyBtns(
-          '🎟️ Discount Coupon',
-          'Have a discount coupon? Type the code below, or tap Skip.',
-          null,
-          [{ id: 'coupon_skip', title: '⏭️ Skip' }]
-        );
+        return showCouponsPrompt(business, waId);
       } else {
         return showDeliveryOptions(business, waId);
       }
@@ -2060,29 +2087,19 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
       // Typed address
       await setLoc(businessId, waId, { address: text, type: 'delivery' });
       await setState(businessId, waId, 'checkout_coupon');
-      return replyBtns(
-        '🎟️ Discount Coupon',
-        `📍 *Saved:* ${text}\n\nHave a discount coupon? Type the code or tap Skip.`,
-        null,
-        [{ id: 'coupon_skip', title: '⏭️ Skip' }]
-      );
+      return showCouponsPrompt(business, waId, `📍 *Saved:* ${text}`);
     }
 
     // ══════════════════════════════════════════
     // CHECKOUT — CONFIRM ADDRESS
     // ══════════════════════════════════════════
     if (state === 'confirm_address') {
-      const isConfirm = ['addr_confirm', 'yes', 'confirm', '1'].some(k => lower.includes(k));
-      const isRetype = ['addr_retype', 'no', 'manual', '2'].some(k => lower.includes(k));
+      const isConfirm = lower === 'addr_confirm' || lower === '1' || lower === 'yes' || lower.includes('confirm');
+      const isRetype = lower === 'addr_retype' || lower === '2' || lower === 'no' || lower.includes('manual') || lower.includes('type');
 
       if (isConfirm) {
         await setState(businessId, waId, 'checkout_coupon');
-        return replyBtns(
-          '🎟️ Discount Coupon',
-          'Have a coupon code? Type it below or tap Skip.',
-          null,
-          [{ id: 'coupon_skip', title: '⏭️ Skip' }]
-        );
+        return showCouponsPrompt(business, waId);
       } else if (isRetype) {
         await setState(businessId, waId, 'checkout_address');
         return reply('✏️ Please type your full delivery address:');
@@ -2111,9 +2128,14 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
       let couponData = null;
 
       if (!isSkip) {
+        let couponInput = text.toUpperCase();
+        if (lower.startsWith('cpn_')) {
+          couponInput = lower.replace('cpn_', '').toUpperCase();
+        }
+
         const coupon = await Coupon.findOne({
           business: businessId,
-          code: text.toUpperCase(),
+          code: couponInput,
           isActive: true,
         });
 
@@ -2151,8 +2173,8 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
     // CHECKOUT — PAYMENT
     // ══════════════════════════════════════════
     if (state === 'checkout_payment') {
-      const isOnline = ['pay_online', '1', 'online', 'upi', 'pay'].some(k => lower.includes(k));
-      const isCOD = ['pay_cod', '2', 'cash', 'cod'].some(k => lower.includes(k));
+      const isOnline = lower === 'pay_online' || lower === '1' || lower.includes('online') || lower.includes('upi');
+      const isCOD = lower === 'pay_cod' || lower === '2' || lower.includes('cash') || lower.includes('cod');
 
       if (!isOnline && !isCOD) {
         // Re-show payment options
