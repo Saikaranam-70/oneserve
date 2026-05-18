@@ -500,11 +500,942 @@
 // module.exports = { handleIncomingMessage };
 
 
+// const Business = require('../models/Business');
+// const Product = require('../models/Product');
+// const Order = require('../models/Order');
+// const Customer = require('../models/Customer');
+// const Coupon = require('../models/Coupon');
+// const {
+//   sendWhatsAppMessage,
+//   sendWhatsAppButtons,
+//   sendWhatsAppList,
+//   sendProductImage,
+//   sendLocationRequest,
+//   sendWelcomeMenu,
+// } = require('./whatsappService');
+// const { redis } = require('../config/rediss');
+// const { v4: uuidv4 } = require('uuid');
+
+// // ═══════════════════════════════════════════════════════════════════
+// // REDIS KEY HELPERS
+// // ═══════════════════════════════════════════════════════════════════
+// const getCartKey = (b, w) => `cart:${b}:${w}`;
+// const getStateKey = (b, w) => `state:${b}:${w}`;
+// const getLocationKey = (b, w) => `loc:${b}:${w}`;
+// const getCatKey = (b, w) => `cache:categories:${b}:${w}`;
+// const getItemsKey = (b, w) => `cache:items:${b}:${w}`;
+// const getCouponKey = (b, w) => `cache:coupon:${b}:${w}`;
+// const getPageKey = (b, w) => `page:${b}:${w}`; // for pagination
+
+// const safeParse = (data, fallback) => {
+//   if (!data) return fallback;
+//   try { return typeof data === 'string' ? JSON.parse(data) : data; }
+//   catch { return fallback; }
+// };
+
+// const getCart = async (b, w) => safeParse(await redis.get(getCartKey(b, w)), []);
+// const saveCart = async (b, w, cart) => redis.set(getCartKey(b, w), JSON.stringify(cart), { ex: 3600 });
+// const getState = async (b, w) => (await redis.get(getStateKey(b, w))) || 'idle';
+// const setState = async (b, w, s) => redis.set(getStateKey(b, w), s, { ex: 3600 });
+// const setLocation = async (b, w, d) => redis.set(getLocationKey(b, w), JSON.stringify(d), { ex: 3600 });
+// const getLocation = async (b, w) => safeParse(await redis.get(getLocationKey(b, w)), null);
+
+// const clearSession = async (b, w) => {
+//   await Promise.all([
+//     redis.del(getCartKey(b, w)),
+//     redis.del(getStateKey(b, w)),
+//     redis.del(getLocationKey(b, w)),
+//     redis.del(getCatKey(b, w)),
+//     redis.del(getItemsKey(b, w)),
+//     redis.del(getCouponKey(b, w)),
+//     redis.del(getPageKey(b, w)),
+//   ]);
+// };
+
+// const generateOrderId = () =>
+//   `ORD-${Date.now().toString(36).toUpperCase()}-${uuidv4().slice(0, 4).toUpperCase()}`;
+
+// // ═══════════════════════════════════════════════════════════════════
+// // FORMATTERS
+// // ═══════════════════════════════════════════════════════════════════
+// const formatCartText = (cart) => {
+//   const lines = cart.map((i, idx) => `${idx + 1}. ${i.name} ×${i.quantity} — ₹${i.price * i.quantity}`);
+//   const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+//   return `🛒 *Your Cart*\n\n${lines.join('\n')}\n\n*Total: ₹${total}*`;
+// };
+
+// const cartTotal = (cart) => cart.reduce((s, i) => s + i.price * i.quantity, 0);
+
+// // ═══════════════════════════════════════════════════════════════════
+// // MESSAGE NORMALIZER — Meta / Baileys / WPPConnect → unified format
+// // ═══════════════════════════════════════════════════════════════════
+// const normaliseMessage = (provider, rawMsg) => {
+//   try {
+//     if (provider === 'meta') {
+//       const msg = rawMsg.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+//       const contact = rawMsg.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
+//       if (!msg) return null;
+
+//       let text = '';
+//       let location = null;
+
+//       if (msg.type === 'text') {
+//         text = msg.text?.body || '';
+//       } else if (msg.type === 'interactive') {
+//         const ir = msg.interactive;
+//         text = ir?.list_reply?.id || ir?.button_reply?.id || ir?.list_reply?.title || ir?.button_reply?.title || '';
+//       } else if (msg.type === 'location') {
+//         location = {
+//           lat: msg.location.latitude,
+//           lng: msg.location.longitude,
+//           address: msg.location.address || msg.location.name || ''
+//         };
+//       }
+
+//       return { waId: msg.from, text: text.trim(), location, name: contact?.profile?.name || 'Customer', msgId: msg.id };
+//     }
+
+//     if (provider === 'baileys') {
+//       const waId = rawMsg.key?.senderPn?.replace('@s.whatsapp.net', '') ||
+//         rawMsg.key?.remoteJid?.replace('@s.whatsapp.net', '');
+//       if (!waId) return null;
+
+//       let text = rawMsg.message?.conversation ||
+//         rawMsg.message?.extendedTextMessage?.text || '';
+//       let location = null;
+
+//       if (rawMsg.message?.buttonsResponseMessage)
+//         text = rawMsg.message.buttonsResponseMessage.selectedButtonId || '';
+//       else if (rawMsg.message?.listResponseMessage)
+//         text = rawMsg.message.listResponseMessage.singleSelectReply?.selectedRowId || '';
+//       else if (rawMsg.message?.locationMessage) {
+//         location = {
+//           lat: rawMsg.message.locationMessage.degreesLatitude,
+//           lng: rawMsg.message.locationMessage.degreesLongitude,
+//           address: rawMsg.message.locationMessage.address || ''
+//         };
+//       }
+//       // Live location
+//       else if (rawMsg.message?.liveLocationMessage) {
+//         location = {
+//           lat: rawMsg.message.liveLocationMessage.degreesLatitude,
+//           lng: rawMsg.message.liveLocationMessage.degreesLongitude,
+//           address: rawMsg.message.liveLocationMessage.address || ''
+//         };
+//       }
+
+//       return { waId, text: text.trim(), location, name: rawMsg.pushName || 'Customer', msgId: rawMsg.key?.id };
+//     }
+
+//     if (provider === 'wppconnect') {
+//       const waId = rawMsg.from?.replace('@c.us', '') || '';
+//       if (!waId) return null;
+
+//       let text = rawMsg.body?.trim() || '';
+//       let location = null;
+
+//       if (rawMsg.type === 'location') {
+//         location = {
+//           lat: rawMsg.lat,
+//           lng: rawMsg.lng,
+//           address: rawMsg.loc || rawMsg.address || ''
+//         };
+//       } else if (rawMsg.type === 'live_location') {
+//         location = {
+//           lat: rawMsg.lat,
+//           lng: rawMsg.lng,
+//           address: rawMsg.loc || ''
+//         };
+//       } else if (rawMsg.type === 'buttons_response' || rawMsg.type === 'list_response') {
+//         text = rawMsg.selectedButtonId || rawMsg.selectedRowId || rawMsg.body || '';
+//       }
+
+//       return { waId, text, location, name: rawMsg.sender?.pushname || 'Customer', msgId: rawMsg.id };
+//     }
+//   } catch (err) {
+//     console.error('Normalizer error:', err.message);
+//   }
+//   return null;
+// };
+
+// // ═══════════════════════════════════════════════════════════════════
+// // REVERSE GEOCODE (for location pin → readable address)
+// // ═══════════════════════════════════════════════════════════════════
+// const reverseGeocode = async (lat, lng) => {
+//   try {
+//     const axios = require('axios');
+//     const { data } = await axios.get(
+//       `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
+//       { headers: { 'User-Agent': 'OneServeBot/1.0' }, timeout: 5000 }
+//     );
+//     return data?.display_name || '';
+//   } catch {
+//     return '';
+//   }
+// };
+
+// // ═══════════════════════════════════════════════════════════════════
+// // RICH UI HELPERS
+// // ═══════════════════════════════════════════════════════════════════
+
+// /**
+//  * Send category list as an interactive list (like Mana Mitra service picker)
+//  */
+// const sendCategoryList = async (business, waId, categories) => {
+//   const rows = categories.map((cat, i) => ({
+//     id: `cat_${i}`,
+//     title: cat.substring(0, 24),
+//     description: `Browse ${cat} items`
+//   }));
+
+//   return sendWhatsAppList(
+//     business, waId,
+//     '🛍️ Shop by Category',
+//     'Select a category to browse available products:',
+//     'Reply *0* anytime to go back',
+//     '📂 Pick Category',
+//     [{ title: 'Categories', rows }]
+//   );
+// };
+
+// /**
+//  * Send product list — if ≤3 products use buttons, otherwise use list message
+//  */
+// const sendProductList = async (business, waId, products, categoryName) => {
+//   if (products.length <= 3) {
+//     // Use button message for small lists
+//     return sendWhatsAppButtons(
+//       business, waId,
+//       `🍽️ ${categoryName}`,
+//       products.map((p, i) =>
+//         `*${i + 1}.* ${p.name}\n💰 ₹${p.discountPrice || p.price}${p.description ? `\n_${p.description.substring(0, 60)}_` : ''}`
+//       ).join('\n\n'),
+//       'Tap to add to cart',
+//       products.slice(0, 3).map((p, i) => ({
+//         id: `item_${i}`,
+//         title: p.name.substring(0, 20)
+//       }))
+//     );
+//   }
+
+//   // Use list message for larger menus
+//   const rows = products.map((p, i) => ({
+//     id: `item_${i}`,
+//     title: p.name.substring(0, 24),
+//     description: `₹${p.discountPrice || p.price}${p.description ? ' • ' + p.description.substring(0, 50) : ''}`
+//   }));
+
+//   return sendWhatsAppList(
+//     business, waId,
+//     `🍽️ ${categoryName}`,
+//     `Here are the available items in *${categoryName}*.\nTap any item to add it to your cart:`,
+//     'Reply *0* to go back to categories',
+//     '🛒 Select Item',
+//     [{ title: categoryName, rows }]
+//   );
+// };
+
+// /**
+//  * Send cart with action buttons
+//  */
+// const sendCartWithActions = async (business, waId, cart) => {
+//   const total = cartTotal(cart);
+//   const lines = cart.map((i, idx) =>
+//     `${idx + 1}. ${i.name} ×${i.quantity} — ₹${i.price * i.quantity}`
+//   ).join('\n');
+
+//   return sendWhatsAppButtons(
+//     business, waId,
+//     `🛒 Your Cart (₹${total})`,
+//     lines || 'Your cart is empty.',
+//     'What would you like to do?',
+//     [
+//       { id: 'cart_more', title: '➕ Add More Items' },
+//       { id: 'cart_checkout', title: '✅ Checkout' },
+//       { id: 'cart_clear', title: '🗑️ Clear Cart' }
+//     ]
+//   );
+// };
+
+// /**
+//  * Send delivery type selection
+//  */
+// const sendDeliveryOptions = async (business, waId) => {
+//   const fee = business.settings?.deliveryFee ?? 30;
+//   return sendWhatsAppButtons(
+//     business, waId,
+//     '🚚 Choose Delivery Type',
+//     `How would you like to receive your order?\n\n🏠 *Home Delivery* — ₹${fee} delivery charge\n🏪 *Self Pickup* — Free, collect from store`,
+//     'Select one option',
+//     [
+//       { id: 'delivery_home', title: '🏠 Home Delivery' },
+//       { id: 'delivery_pickup', title: '🏪 Self Pickup' }
+//     ]
+//   );
+// };
+
+// /**
+//  * Send payment options
+//  */
+// const sendPaymentOptions = async (business, waId, summaryText) => {
+//   return sendWhatsAppButtons(
+//     business, waId,
+//     '💳 Choose Payment Method',
+//     summaryText,
+//     'Select how you\'d like to pay',
+//     [
+//       { id: 'pay_online', title: '📱 Pay Online (UPI)' },
+//       { id: 'pay_cod', title: '💵 Cash on Delivery' }
+//     ]
+//   );
+// };
+
+// // ═══════════════════════════════════════════════════════════════════
+// // MAIN HANDLER
+// // ═══════════════════════════════════════════════════════════════════
+// const handleIncomingMessage = async (provider, businessId, rawMsg) => {
+//   try {
+//     console.log('🤖 BOT ENGINE CALLED — provider:', provider, 'businessId:', businessId);
+//     const parsed = normaliseMessage(provider, rawMsg);
+//     console.log('🔄 Normalised message:', JSON.stringify(parsed, null, 2));
+//     if (!parsed) {
+//       console.log('⚠️ No parsed message — skipping');
+//       return;
+//     }
+
+//     const { waId, text, location, name, msgId } = parsed;
+//     const lowerText = text.toLowerCase().trim();
+//     console.log('📱 waId:', waId, '| text:', text, '| hasLocation:', !!location);
+//     // Need text OR location to proceed
+//     if (!text && !location) return;
+
+//     // ─── Deduplication ───
+//     if (msgId) {
+//       const isNew = await redis.setnx(`msg_dedup:${msgId}`, '1');
+//       if (!isNew) return;
+//       await redis.expire(`msg_dedup:${msgId}`, 120);
+//     }
+
+//     // ─── Business (cached) ───
+//     let business;
+//     const cached = await redis.get(`biz:${businessId}`);
+//     if (cached) {
+//       business = safeParse(cached, null);
+//     } else {
+//       business = await Business.findById(businessId).lean();
+//       if (business) await redis.set(`biz:${businessId}`, JSON.stringify(business), { ex: 300 });
+//     }
+//     if (!business) return;
+
+//     // ─── Customer upsert ───
+//     let customer = await Customer.findOneAndUpdate(
+//       { business: businessId, waId },
+//       { name: name || 'Customer', phone: waId },
+//       { upsert: true, new: true }
+//     );
+
+//     // Shorthand reply
+//     const reply = (msg) => sendWhatsAppMessage(business, waId, msg);
+//     const replyBtns = (...args) => sendWhatsAppButtons(business, waId, ...args);
+//     const replyList = (...args) => sendWhatsAppList(business, waId, ...args);
+
+//     // ─── Reset trigger keywords ───
+//     const resetTriggers = ['hi', 'hello', 'hey', 'menu', 'start', 'hii', 'hai', 'hy'];
+//     if (resetTriggers.includes(lowerText)) {
+//       await clearSession(businessId, waId);
+//     }
+
+//     // ─── Global cancel ───
+//     if (lowerText === 'cancel' || lowerText === 'reset') {
+//       await clearSession(businessId, waId);
+//       return sendWelcomeMenu(business, waId);
+//     }
+
+//     let state = await getState(businessId, waId);
+
+//     // ═══════════════════════════════════════════
+//     // ONBOARDING — collect name if first time
+//     // ═══════════════════════════════════════════
+//     if (state === 'idle' && (!customer.name || customer.name === 'Customer')) {
+//       await setState(businessId, waId, 'awaiting_name');
+//       return reply(`👋 Welcome to *${business.name}*!\n\nBefore we get started, could you tell us your name?`);
+//     }
+
+//     if (state === 'awaiting_name') {
+//       if (!text || text.length < 2) return reply('Please type a valid name (at least 2 characters).');
+//       customer.name = text;
+//       await customer.save();
+//       await setState(businessId, waId, 'idle');
+//       // Fall through to show welcome
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // IDLE → show welcome menu
+//     // ═══════════════════════════════════════════
+//     if (state === 'idle' || state === 'awaiting_name') {
+//       await setState(businessId, waId, 'welcome');
+//       return sendWelcomeMenu(business, waId);
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // WELCOME — main menu selection
+//     // ═══════════════════════════════════════════
+//     if (state === 'welcome') {
+//       // Accept both interactive IDs and numeric fallbacks
+//       const isBrowse = lowerText === 'menu_browse' || lowerText === '1' || lowerText.includes('browse') || lowerText.includes('menu');
+//       const isTrack = lowerText === 'menu_track' || lowerText === '2' || lowerText.includes('track');
+//       const isSupport = lowerText === 'menu_support' || lowerText === '3' || lowerText.includes('support') || lowerText.includes('talk');
+
+//       if (isBrowse) {
+//         const categories = await Product.distinct('category', { business: businessId, isAvailable: true });
+//         if (!categories.length) return reply('😔 Sorry, no products are currently available. Please check back later!');
+
+//         await redis.set(getCatKey(businessId, waId), JSON.stringify(categories), { ex: 3600 });
+//         await setState(businessId, waId, 'browsing_categories');
+
+//         return sendCategoryList(business, waId, categories);
+
+//       } else if (isTrack) {
+//         const orders = await Order.find({ business: businessId, 'customer.waId': waId })
+//           .sort({ createdAt: -1 }).limit(3).lean();
+
+//         if (!orders.length) {
+//           return replyBtns(
+//             '📦 Order History',
+//             'You haven\'t placed any orders yet. Ready to order something delicious?',
+//             null,
+//             [{ id: 'menu_browse', title: '🛒 Browse Menu' }]
+//           );
+//         }
+
+//         const statusEmoji = { pending: '🕐', confirmed: '✅', preparing: '👨‍🍳', dispatched: '🚚', delivered: '🎉', cancelled: '❌' };
+//         const lines = orders.map(o =>
+//           `${statusEmoji[o.status] || '📦'} *${o.orderId}*\nStatus: ${o.status.toUpperCase()} | ₹${o.total}`
+//         ).join('\n\n');
+
+//         return replyBtns(
+//           '📦 Your Recent Orders',
+//           lines,
+//           'Showing last 3 orders',
+//           [{ id: 'menu_browse', title: '🛒 Order Again' }]
+//         );
+
+//       } else if (isSupport) {
+//         const phone = business.phone || 'our official number';
+//         return replyBtns(
+//           '💬 Customer Support',
+//           `Need help? Our team is here for you!\n\n📞 *Phone:* ${phone}\n\nOr simply describe your issue and we'll get back to you.`,
+//           'Tap below to go back to the main menu',
+//           [{ id: 'menu_browse', title: '⬅️ Back to Menu' }]
+//         );
+
+//       } else {
+//         return sendWelcomeMenu(business, waId);
+//       }
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // BROWSING CATEGORIES
+//     // ═══════════════════════════════════════════
+//     if (state === 'browsing_categories') {
+//       const categories = safeParse(await redis.get(getCatKey(businessId, waId)), []);
+
+//       // Match by interactive list ID (cat_0, cat_1, ...) OR numeric text OR category name
+//       let selectedIdx = -1;
+
+//       if (lowerText.startsWith('cat_')) {
+//         selectedIdx = parseInt(lowerText.replace('cat_', ''));
+//       } else {
+//         const num = parseInt(lowerText);
+//         if (!isNaN(num) && num > 0 && num <= categories.length) {
+//           selectedIdx = num - 1;
+//         } else {
+//           // Try matching by name
+//           selectedIdx = categories.findIndex(c => c.toLowerCase() === lowerText);
+//         }
+//       }
+
+//       if (selectedIdx >= 0 && selectedIdx < categories.length) {
+//         const selectedCat = categories[selectedIdx];
+//         const products = await Product.find({
+//           business: businessId,
+//           category: selectedCat,
+//           isAvailable: true
+//         }).sort({ sortOrder: 1, name: 1 }).lean();
+
+//         if (!products.length) {
+//           return replyBtns(
+//             `📂 ${selectedCat}`,
+//             'No items are currently available in this category.',
+//             'Please try another category',
+//             [{ id: 'back_categories', title: '⬅️ Back to Categories' }]
+//           );
+//         }
+
+//         const itemData = products.map(p => ({
+//           _id: p._id,
+//           name: p.name,
+//           price: p.discountPrice || p.price,
+//           images: p.images
+//         }));
+//         await redis.set(getItemsKey(businessId, waId), JSON.stringify(itemData), { ex: 3600 });
+//         await redis.set(`cache:catname:${businessId}:${waId}`, selectedCat, { ex: 3600 });
+//         await setState(businessId, waId, 'browsing_items');
+
+//         return sendProductList(business, waId, itemData, selectedCat);
+
+//       } else if (lowerText === 'back_categories' || lowerText === 'back' || lowerText === '0') {
+//         await setState(businessId, waId, 'welcome');
+//         return sendWelcomeMenu(business, waId);
+//       } else {
+//         return sendCategoryList(business, waId, categories);
+//       }
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // BROWSING ITEMS
+//     // ═══════════════════════════════════════════
+//     if (state === 'browsing_items') {
+//       const items = safeParse(await redis.get(getItemsKey(businessId, waId)), []);
+//       const catName = (await redis.get(`cache:catname:${businessId}:${waId}`)) || 'Items';
+
+//       // Match by item_0, item_1, ... OR numeric OR name
+//       let selectedIdx = -1;
+
+//       if (lowerText.startsWith('item_')) {
+//         selectedIdx = parseInt(lowerText.replace('item_', ''));
+//       } else {
+//         const num = parseInt(lowerText);
+//         if (!isNaN(num) && num > 0 && num <= items.length) {
+//           selectedIdx = num - 1;
+//         } else {
+//           selectedIdx = items.findIndex(i => i.name.toLowerCase() === lowerText);
+//         }
+//       }
+
+//       if (lowerText === 'back_categories' || lowerText === 'back' || lowerText === '0') {
+//         const categories = safeParse(await redis.get(getCatKey(businessId, waId)), []);
+//         if (!categories || categories.length === 0) {
+//           await setState(businessId, waId, 'welcome');
+//           return sendWelcomeMenu(business, waId);
+//         }
+//         await setState(businessId, waId, 'browsing_categories');
+//         return sendCategoryList(business, waId, categories);
+//       }
+
+//       if (lowerText === 'view_cart' || lowerText === 'cart') {
+//         const cart = await getCart(businessId, waId);
+//         if (!cart.length) return reply('🛒 Your cart is empty. Select an item to add!');
+//         await setState(businessId, waId, 'item_added');
+//         return sendCartWithActions(business, waId, cart);
+//       }
+
+//       if (selectedIdx >= 0 && selectedIdx < items.length) {
+//         const selected = items[selectedIdx];
+//         const cart = await getCart(businessId, waId);
+
+//         const existing = cart.find(i => i.productId === selected._id.toString());
+//         if (existing) existing.quantity += 1;
+//         else cart.push({ productId: selected._id.toString(), name: selected.name, price: selected.price, quantity: 1 });
+
+//         await saveCart(businessId, waId, cart);
+//         await setState(businessId, waId, 'item_added');
+
+//         const total = cartTotal(cart);
+//         const itemCount = cart.reduce((s, i) => s + i.quantity, 0);
+//         const caption = `✅ *${selected.name}* added to cart!\n\n🛒 *${itemCount} item${itemCount > 1 ? 's' : ''}* in cart — Total: *₹${total}*`;
+
+//         // Try to send product image
+//         const fullProduct = await Product.findById(selected._id).lean();
+//         if (fullProduct?.images?.[0]?.url) {
+//           await sendProductImage(business, waId, fullProduct, caption);
+//         }
+
+//         // Always follow up with action buttons
+//         return replyBtns(
+//           null,
+//           'What would you like to do next?',
+//           null,
+//           [
+//             { id: 'cart_more', title: '➕ Add More Items' },
+//             { id: 'view_cart', title: '🛒 View Cart' },
+//             { id: 'cart_checkout', title: '✅ Checkout' }
+//           ]
+//         );
+//       } else {
+//         return sendProductList(business, waId, items, catName);
+//       }
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // ITEM ADDED — post-add actions
+//     // ═══════════════════════════════════════════
+//     if (state === 'item_added') {
+//       const cart = await getCart(businessId, waId);
+
+//       if (lowerText === 'cart_more' || lowerText === '1' || lowerText.includes('add more')) {
+//         const categories = safeParse(await redis.get(getCatKey(businessId, waId)), []);
+//         if (categories.length) {
+//           await setState(businessId, waId, 'browsing_categories');
+//           return sendCategoryList(business, waId, categories);
+//         }
+//         await setState(businessId, waId, 'welcome');
+//         return sendWelcomeMenu(business, waId);
+
+//       } else if (lowerText === 'view_cart' || lowerText === '2' || lowerText.includes('view cart') || lowerText.includes('cart')) {
+//         return sendCartWithActions(business, waId, cart);
+
+//       } else if (lowerText === 'cart_checkout' || lowerText === '3' || lowerText.includes('checkout')) {
+//         if (!cart.length) return reply('🛒 Your cart is empty!');
+//         await setState(businessId, waId, 'checkout_delivery');
+//         return sendDeliveryOptions(business, waId);
+
+//       } else if (lowerText === 'cart_clear' || lowerText.includes('clear')) {
+//         await redis.del(getCartKey(businessId, waId));
+//         return replyBtns(
+//           '🗑️ Cart Cleared',
+//           'Your cart has been cleared. Start fresh!',
+//           null,
+//           [{ id: 'menu_browse', title: '🛒 Browse Menu' }]
+//         );
+//       } else {
+//         return sendCartWithActions(business, waId, cart);
+//       }
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // CHECKOUT — DELIVERY TYPE
+//     // ═══════════════════════════════════════════
+//     if (state === 'checkout_delivery') {
+//       const isDelivery = lowerText === 'delivery_home' || lowerText === '1' || lowerText.includes('home') || lowerText.includes('delivery');
+//       const isPickup = lowerText === 'delivery_pickup' || lowerText === '2' || lowerText.includes('pickup') || lowerText.includes('self');
+
+//       if (isDelivery) {
+//         await setState(businessId, waId, 'checkout_address');
+//         return sendLocationRequest(business, waId);
+
+//       } else if (isPickup) {
+//         await setLocation(businessId, waId, { type: 'pickup', address: 'Self Pickup' });
+//         await setState(businessId, waId, 'checkout_coupon');
+//         return replyBtns(
+//           '🎟️ Discount Coupon',
+//           'Do you have a discount coupon code?\n\nType your code below, or tap *Skip* if you don\'t have one.',
+//           null,
+//           [{ id: 'coupon_skip', title: '⏭️ Skip Coupon' }]
+//         );
+//       } else {
+//         return sendDeliveryOptions(business, waId);
+//       }
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // CHECKOUT — ADDRESS (location or text)
+//     // ═══════════════════════════════════════════
+//     if (state === 'checkout_address') {
+//       // User tapped "Type Address" button
+//       if (lowerText === 'type_address_manually') {
+//         return reply('✏️ Please type your full delivery address:');
+//       }
+
+//       if (!text && !location) {
+//         return sendLocationRequest(business, waId);
+//       }
+
+//       let addrStr = '';
+
+//       if (location) {
+//         // Shared location pin (live or current)
+//         let fullAddress = location.address || '';
+//         if (!fullAddress && location.lat && location.lng) {
+//           fullAddress = await reverseGeocode(location.lat, location.lng);
+//         }
+//         addrStr = fullAddress || `📍 Lat: ${location.lat}, Lng: ${location.lng}`;
+//         await setLocation(businessId, waId, { ...location, address: addrStr, type: 'delivery' });
+
+//         // Confirm the detected address with user
+//         await replyBtns(
+//           '📍 Location Received',
+//           `We detected your address as:\n\n*${addrStr}*\n\nIs this correct?`,
+//           null,
+//           [
+//             { id: 'addr_confirm', title: '✅ Yes, Confirm' },
+//             { id: 'addr_retype', title: '✏️ Enter Manually' }
+//           ]
+//         );
+//         await setState(businessId, waId, 'confirm_address');
+//         return;
+
+//       } else if (text) {
+//         // Manually typed address
+//         addrStr = text;
+//         await setLocation(businessId, waId, { address: addrStr, type: 'delivery' });
+//         await setState(businessId, waId, 'checkout_coupon');
+//         return replyBtns(
+//           '🎟️ Discount Coupon',
+//           `📍 *Address saved:* ${addrStr}\n\nDo you have a discount coupon code?`,
+//           null,
+//           [{ id: 'coupon_skip', title: '⏭️ Skip Coupon' }]
+//         );
+//       }
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // CONFIRM ADDRESS (after location pin)
+//     // ═══════════════════════════════════════════
+//     if (state === 'confirm_address') {
+//       if (lowerText === 'addr_confirm' || lowerText === 'yes' || lowerText.includes('confirm')) {
+//         await setState(businessId, waId, 'checkout_coupon');
+//         return replyBtns(
+//           '🎟️ Discount Coupon',
+//           'Do you have a discount coupon code?\n\nType your code below, or tap *Skip*.',
+//           null,
+//           [{ id: 'coupon_skip', title: '⏭️ Skip Coupon' }]
+//         );
+//       } else if (lowerText === 'addr_retype' || lowerText === 'no' || lowerText.includes('manual')) {
+//         await setState(businessId, waId, 'checkout_address');
+//         return reply('✏️ Please type your full delivery address:');
+//       } else {
+//         const locData = await getLocation(businessId, waId);
+//         return replyBtns(
+//           '📍 Confirm Address',
+//           `Detected address:\n*${locData?.address || 'Unknown'}*\n\nIs this correct?`,
+//           null,
+//           [
+//             { id: 'addr_confirm', title: '✅ Yes, Confirm' },
+//             { id: 'addr_retype', title: '✏️ Enter Manually' }
+//           ]
+//         );
+//       }
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // CHECKOUT — COUPON
+//     // ═══════════════════════════════════════════
+//     if (state === 'checkout_coupon') {
+//       const cart = await getCart(businessId, waId);
+//       const subtotal = cartTotal(cart);
+
+//       const isSkip = lowerText === 'coupon_skip' || lowerText === 'skip' || lowerText === 'no';
+
+//       let discount = 0;
+//       let couponCode = '';
+//       let couponApplied = false;
+
+//       if (!isSkip) {
+//         const coupon = await Coupon.findOne({
+//           business: businessId,
+//           code: text.toUpperCase(),
+//           isActive: true
+//         });
+
+//         if (!coupon) {
+//           return replyBtns(
+//             '❌ Invalid Coupon',
+//             `The coupon code *${text.toUpperCase()}* is not valid or has expired.\n\nTry another code, or skip.`,
+//             null,
+//             [{ id: 'coupon_skip', title: '⏭️ Skip Coupon' }]
+//           );
+//         }
+
+//         if (subtotal < coupon.minOrderValue) {
+//           return replyBtns(
+//             '⚠️ Minimum Order Not Met',
+//             `This coupon requires a minimum order of *₹${coupon.minOrderValue}*.\nYour subtotal is ₹${subtotal}.\n\nAdd more items or skip.`,
+//             null,
+//             [
+//               { id: 'cart_more', title: '➕ Add Items' },
+//               { id: 'coupon_skip', title: '⏭️ Skip Coupon' }
+//             ]
+//           );
+//         }
+
+//         couponCode = coupon.code;
+//         discount = coupon.discountType === 'percentage'
+//           ? (subtotal * coupon.discountValue) / 100
+//           : coupon.discountValue;
+//         if (coupon.maxDiscount && discount > coupon.maxDiscount) discount = coupon.maxDiscount;
+//         couponApplied = true;
+
+//         await redis.set(getCouponKey(businessId, waId), JSON.stringify({
+//           code: coupon.code,
+//           type: coupon.discountType,
+//           value: coupon.discountValue,
+//           max: coupon.maxDiscount
+//         }), { ex: 3600 });
+//       }
+
+//       // Build order summary
+//       const locData = await getLocation(businessId, waId);
+//       const isDelivery = locData?.type === 'delivery';
+//       const fee = business.settings?.deliveryFee ?? 30;
+//       const deliveryFee = isDelivery ? fee : 0;
+//       const total = subtotal + deliveryFee - discount;
+
+//       const cartLines = cart.map(i => `• ${i.name} ×${i.quantity} = ₹${i.price * i.quantity}`).join('\n');
+
+//       let summaryText = `🧾 *Order Summary*\n\n${cartLines}\n\n`;
+//       summaryText += `Subtotal: ₹${subtotal}\n`;
+//       summaryText += `Delivery: ₹${deliveryFee}`;
+//       if (couponApplied) summaryText += `\n🎟️ Discount (${couponCode}): -₹${discount.toFixed(0)}`;
+//       summaryText += `\n\n*💰 Total: ₹${total.toFixed(0)}*`;
+//       summaryText += `\n📍 ${locData?.address || 'Self Pickup'}`;
+
+//       await setState(businessId, waId, 'checkout_payment');
+
+//       return sendPaymentOptions(business, waId, summaryText);
+//     }
+
+//     // ═══════════════════════════════════════════
+//     // CHECKOUT — PAYMENT
+//     // ═══════════════════════════════════════════
+//     if (state === 'checkout_payment') {
+//       const cart = await getCart(businessId, waId);
+//       if (!cart.length) {
+//         await setState(businessId, waId, 'idle');
+//         return reply('⏰ Your cart has expired. Let\'s start over!');
+//       }
+
+//       const isOnline = lowerText === 'pay_online' || lowerText === '1' || lowerText.includes('online') || lowerText.includes('upi');
+//       const isCOD = lowerText === 'pay_cod' || lowerText === '2' || lowerText.includes('cash') || lowerText.includes('cod');
+
+//       if (!isOnline && !isCOD) {
+//         const locData = await getLocation(businessId, waId);
+//         const subtotal = cartTotal(cart);
+//         const isDelivery = locData?.type === 'delivery';
+//         const fee = business.settings?.deliveryFee ?? 30;
+//         const deliveryFee = isDelivery ? fee : 0;
+//         const couponRaw = await redis.get(getCouponKey(businessId, waId));
+//         let discount = 0;
+//         if (couponRaw) {
+//           const c = JSON.parse(couponRaw);
+//           discount = c.type === 'percentage' ? (subtotal * c.value) / 100 : c.value;
+//           if (c.max && discount > c.max) discount = c.max;
+//         }
+//         const total = subtotal + deliveryFee - discount;
+//         return sendPaymentOptions(business, waId, `💰 *Total: ₹${total.toFixed(0)}*\n\nChoose payment method:`);
+//       }
+
+//       // ── Process Order ──
+//       const locData = await getLocation(businessId, waId);
+//       const subtotal = cartTotal(cart);
+//       const isDelivery = locData?.type === 'delivery';
+//       const fee = business.settings?.deliveryFee ?? 30;
+//       const deliveryFee = isDelivery ? fee : 0;
+
+//       let discount = 0;
+//       let couponCode = '';
+//       const couponRaw = await redis.get(getCouponKey(businessId, waId));
+//       if (couponRaw) {
+//         const c = JSON.parse(couponRaw);
+//         couponCode = c.code;
+//         discount = c.type === 'percentage' ? (subtotal * c.value) / 100 : c.value;
+//         if (c.max && discount > c.max) discount = c.max;
+//       }
+
+//       const total = subtotal + deliveryFee - discount;
+
+//       const order = await Order.create({
+//         business: businessId,
+//         orderId: generateOrderId(),
+//         customer: { name: customer.name, phone: waId, waId },
+//         items: cart.map(i => ({
+//           product: i.productId,
+//           name: i.name,
+//           price: i.price,
+//           quantity: i.quantity,
+//           total: i.price * i.quantity
+//         })),
+//         subtotal,
+//         deliveryCharge: deliveryFee,
+//         discount,
+//         couponCode,
+//         total,
+//         deliveryAddress: locData?.address || (isDelivery ? 'Location Pin' : 'Self Pickup'),
+//         deliveryType: isDelivery ? 'delivery' : 'pickup',
+//         paymentMethod: isOnline ? 'online' : 'cod',
+//         status: 'pending',
+//         statusHistory: [{ status: 'pending' }],
+//       });
+
+//       await Customer.updateOne(
+//         { business: businessId, waId },
+//         { $inc: { totalOrders: 1, totalSpent: total }, $set: { lastOrderAt: new Date() } }
+//       );
+
+//       if (couponCode) {
+//         await Coupon.findOneAndUpdate(
+//           { business: businessId, code: couponCode },
+//           { $inc: { usedCount: 1 } }
+//         );
+//       }
+
+//       await clearSession(businessId, waId);
+
+//       if (isOnline) {
+//         // Send payment link first, then confirmation
+//         await reply(`🔗 *Payment Link:*\nhttps://rzp.io/i/dummy${order.orderId}\n\n_Complete payment within 10 minutes to confirm your order._`);
+//       }
+
+//       return replyBtns(
+//         `🎉 Order Placed!`,
+//         `Your order *#${order.orderId}* has been placed successfully!\n\n⏱️ Estimated time: *30–40 minutes*\n\nThank you for ordering from *${business.name}*! 🙏`,
+//         'Reply "hi" anytime to order again',
+//         [{ id: 'menu_track', title: '📦 Track My Order' }]
+//       );
+//     }
+
+//     // ─── Default fallback ───
+//     await clearSession(businessId, waId);
+//     await setState(businessId, waId, 'welcome');
+//     return sendWelcomeMenu(business, waId);
+
+//   } catch (err) {
+//     console.error('BOT ERROR:', err);
+//   }
+// };
+
+// module.exports = { handleIncomingMessage };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+ * OneServe Bot Engine — botEngine.js
+ * Clean state machine for WhatsApp ordering flow.
+ * Supports Meta Cloud API, Baileys, WPPConnect.
+ *
+ * ORDER FLOW:
+ * idle → welcome → browsing_categories → browsing_items
+ *      → item_added → checkout_delivery → checkout_address
+ *      → confirm_address → checkout_coupon → checkout_payment → DONE
+ */
+
 const Business = require('../models/Business');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
 const Coupon = require('../models/Coupon');
+const { redis } = require('../config/rediss');
+const { v4: uuidv4 } = require('uuid');
+
 const {
   sendWhatsAppMessage,
   sendWhatsAppButtons,
@@ -513,154 +1444,65 @@ const {
   sendLocationRequest,
   sendWelcomeMenu,
 } = require('./whatsappService');
-const { redis } = require('../config/rediss');
-const { v4: uuidv4 } = require('uuid');
 
-// ═══════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────
 // REDIS KEY HELPERS
-// ═══════════════════════════════════════════════════════════════════
-const getCartKey = (b, w) => `cart:${b}:${w}`;
-const getStateKey = (b, w) => `state:${b}:${w}`;
-const getLocationKey = (b, w) => `loc:${b}:${w}`;
-const getCatKey = (b, w) => `cache:categories:${b}:${w}`;
-const getItemsKey = (b, w) => `cache:items:${b}:${w}`;
-const getCouponKey = (b, w) => `cache:coupon:${b}:${w}`;
-const getPageKey = (b, w) => `page:${b}:${w}`; // for pagination
+// ─────────────────────────────────────────────
+const K = {
+  cart: (b, w) => `cart:${b}:${w}`,
+  state: (b, w) => `state:${b}:${w}`,
+  loc: (b, w) => `loc:${b}:${w}`,
+  cats: (b, w) => `cats:${b}:${w}`,
+  items: (b, w) => `items:${b}:${w}`,
+  catName: (b, w) => `catname:${b}:${w}`,
+  coupon: (b, w) => `coupon:${b}:${w}`,
+  biz: (b) => `biz:${b}`,
+  dedup: (id) => `dedup:${id}`,
+};
 
-const safeParse = (data, fallback) => {
-  if (!data) return fallback;
-  try { return typeof data === 'string' ? JSON.parse(data) : data; }
+const TTL = { session: 3600, biz: 300, dedup: 120 };
+
+// ─────────────────────────────────────────────
+// REDIS HELPERS
+// ─────────────────────────────────────────────
+const safeParse = (raw, fallback) => {
+  if (!raw) return fallback;
+  try { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
   catch { return fallback; }
 };
 
-const getCart = async (b, w) => safeParse(await redis.get(getCartKey(b, w)), []);
-const saveCart = async (b, w, cart) => redis.set(getCartKey(b, w), JSON.stringify(cart), { ex: 3600 });
-const getState = async (b, w) => (await redis.get(getStateKey(b, w))) || 'idle';
-const setState = async (b, w, s) => redis.set(getStateKey(b, w), s, { ex: 3600 });
-const setLocation = async (b, w, d) => redis.set(getLocationKey(b, w), JSON.stringify(d), { ex: 3600 });
-const getLocation = async (b, w) => safeParse(await redis.get(getLocationKey(b, w)), null);
+const getCart = async (b, w) => safeParse(await redis.get(K.cart(b, w)), []);
+const saveCart = async (b, w, cart) => redis.set(K.cart(b, w), JSON.stringify(cart), { ex: TTL.session });
+const getState = async (b, w) => (await redis.get(K.state(b, w))) || 'idle';
+const setState = async (b, w, s) => redis.set(K.state(b, w), s, { ex: TTL.session });
+const setLoc = async (b, w, d) => redis.set(K.loc(b, w), JSON.stringify(d), { ex: TTL.session });
+const getLoc = async (b, w) => safeParse(await redis.get(K.loc(b, w)), null);
 
-const clearSession = async (b, w) => {
-  await Promise.all([
-    redis.del(getCartKey(b, w)),
-    redis.del(getStateKey(b, w)),
-    redis.del(getLocationKey(b, w)),
-    redis.del(getCatKey(b, w)),
-    redis.del(getItemsKey(b, w)),
-    redis.del(getCouponKey(b, w)),
-    redis.del(getPageKey(b, w)),
-  ]);
-};
+const clearSession = (b, w) => Promise.all([
+  redis.del(K.cart(b, w)),
+  redis.del(K.state(b, w)),
+  redis.del(K.loc(b, w)),
+  redis.del(K.cats(b, w)),
+  redis.del(K.items(b, w)),
+  redis.del(K.catName(b, w)),
+  redis.del(K.coupon(b, w)),
+]);
 
 const generateOrderId = () =>
   `ORD-${Date.now().toString(36).toUpperCase()}-${uuidv4().slice(0, 4).toUpperCase()}`;
 
-// ═══════════════════════════════════════════════════════════════════
-// FORMATTERS
-// ═══════════════════════════════════════════════════════════════════
-const formatCartText = (cart) => {
-  const lines = cart.map((i, idx) => `${idx + 1}. ${i.name} ×${i.quantity} — ₹${i.price * i.quantity}`);
-  const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
-  return `🛒 *Your Cart*\n\n${lines.join('\n')}\n\n*Total: ₹${total}*`;
-};
+// ─────────────────────────────────────────────
+// CART HELPERS
+// ─────────────────────────────────────────────
+const cartTotal = (cart) =>
+  cart.reduce((s, i) => s + i.price * i.quantity, 0);
 
-const cartTotal = (cart) => cart.reduce((s, i) => s + i.price * i.quantity, 0);
+const cartSummaryLines = (cart) =>
+  cart.map((i, idx) => `${idx + 1}. ${i.name} ×${i.quantity} — ₹${i.price * i.quantity}`).join('\n');
 
-// ═══════════════════════════════════════════════════════════════════
-// MESSAGE NORMALIZER — Meta / Baileys / WPPConnect → unified format
-// ═══════════════════════════════════════════════════════════════════
-const normaliseMessage = (provider, rawMsg) => {
-  try {
-    if (provider === 'meta') {
-      const msg = rawMsg.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-      const contact = rawMsg.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
-      if (!msg) return null;
-
-      let text = '';
-      let location = null;
-
-      if (msg.type === 'text') {
-        text = msg.text?.body || '';
-      } else if (msg.type === 'interactive') {
-        const ir = msg.interactive;
-        text = ir?.list_reply?.id || ir?.button_reply?.id || ir?.list_reply?.title || ir?.button_reply?.title || '';
-      } else if (msg.type === 'location') {
-        location = {
-          lat: msg.location.latitude,
-          lng: msg.location.longitude,
-          address: msg.location.address || msg.location.name || ''
-        };
-      }
-
-      return { waId: msg.from, text: text.trim(), location, name: contact?.profile?.name || 'Customer', msgId: msg.id };
-    }
-
-    if (provider === 'baileys') {
-      const waId = rawMsg.key?.senderPn?.replace('@s.whatsapp.net', '') ||
-        rawMsg.key?.remoteJid?.replace('@s.whatsapp.net', '');
-      if (!waId) return null;
-
-      let text = rawMsg.message?.conversation ||
-        rawMsg.message?.extendedTextMessage?.text || '';
-      let location = null;
-
-      if (rawMsg.message?.buttonsResponseMessage)
-        text = rawMsg.message.buttonsResponseMessage.selectedButtonId || '';
-      else if (rawMsg.message?.listResponseMessage)
-        text = rawMsg.message.listResponseMessage.singleSelectReply?.selectedRowId || '';
-      else if (rawMsg.message?.locationMessage) {
-        location = {
-          lat: rawMsg.message.locationMessage.degreesLatitude,
-          lng: rawMsg.message.locationMessage.degreesLongitude,
-          address: rawMsg.message.locationMessage.address || ''
-        };
-      }
-      // Live location
-      else if (rawMsg.message?.liveLocationMessage) {
-        location = {
-          lat: rawMsg.message.liveLocationMessage.degreesLatitude,
-          lng: rawMsg.message.liveLocationMessage.degreesLongitude,
-          address: rawMsg.message.liveLocationMessage.address || ''
-        };
-      }
-
-      return { waId, text: text.trim(), location, name: rawMsg.pushName || 'Customer', msgId: rawMsg.key?.id };
-    }
-
-    if (provider === 'wppconnect') {
-      const waId = rawMsg.from?.replace('@c.us', '') || '';
-      if (!waId) return null;
-
-      let text = rawMsg.body?.trim() || '';
-      let location = null;
-
-      if (rawMsg.type === 'location') {
-        location = {
-          lat: rawMsg.lat,
-          lng: rawMsg.lng,
-          address: rawMsg.loc || rawMsg.address || ''
-        };
-      } else if (rawMsg.type === 'live_location') {
-        location = {
-          lat: rawMsg.lat,
-          lng: rawMsg.lng,
-          address: rawMsg.loc || ''
-        };
-      } else if (rawMsg.type === 'buttons_response' || rawMsg.type === 'list_response') {
-        text = rawMsg.selectedButtonId || rawMsg.selectedRowId || rawMsg.body || '';
-      }
-
-      return { waId, text, location, name: rawMsg.sender?.pushname || 'Customer', msgId: rawMsg.id };
-    }
-  } catch (err) {
-    console.error('Normalizer error:', err.message);
-  }
-  return null;
-};
-
-// ═══════════════════════════════════════════════════════════════════
-// REVERSE GEOCODE (for location pin → readable address)
-// ═══════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────
+// REVERSE GEOCODE
+// ─────────────────────────────────────────────
 const reverseGeocode = async (lat, lng) => {
   try {
     const axios = require('axios');
@@ -674,666 +1516,668 @@ const reverseGeocode = async (lat, lng) => {
   }
 };
 
-// ═══════════════════════════════════════════════════════════════════
-// RICH UI HELPERS
-// ═══════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────
+// MESSAGE NORMALISER  →  { waId, text, location, name, msgId }
+// ─────────────────────────────────────────────
+const normaliseMessage = (provider, raw) => {
+  try {
+    if (provider === 'meta') {
+      const msg = raw.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+      const contact = raw.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
+      if (!msg) return null;
 
-/**
- * Send category list as an interactive list (like Mana Mitra service picker)
- */
-const sendCategoryList = async (business, waId, categories) => {
-  const rows = categories.map((cat, i) => ({
-    id: `cat_${i}`,
-    title: cat.substring(0, 24),
-    description: `Browse ${cat} items`
-  }));
+      let text = '', location = null;
 
-  return sendWhatsAppList(
+      if (msg.type === 'text') {
+        text = msg.text?.body || '';
+      } else if (msg.type === 'interactive') {
+        const ir = msg.interactive;
+        text = ir?.list_reply?.id
+          || ir?.button_reply?.id
+          || ir?.list_reply?.title
+          || ir?.button_reply?.title
+          || '';
+      } else if (msg.type === 'location') {
+        location = {
+          lat: msg.location.latitude,
+          lng: msg.location.longitude,
+          address: msg.location.address || msg.location.name || '',
+        };
+      }
+
+      return {
+        waId: msg.from,
+        text: text.trim(),
+        location,
+        name: contact?.profile?.name || 'Customer',
+        msgId: msg.id,
+      };
+    }
+
+    if (provider === 'baileys') {
+      const waId = (rawMsg.key?.remoteJid || '').replace('@s.whatsapp.net', '');
+      if (!waId || waId.includes('broadcast')) return null;
+
+      let text = raw.message?.conversation
+        || raw.message?.extendedTextMessage?.text
+        || raw.message?.buttonsResponseMessage?.selectedButtonId
+        || raw.message?.listResponseMessage?.singleSelectReply?.selectedRowId
+        || '';
+      let location = null;
+
+      const locMsg = raw.message?.locationMessage || raw.message?.liveLocationMessage;
+      if (locMsg) {
+        location = {
+          lat: locMsg.degreesLatitude,
+          lng: locMsg.degreesLongitude,
+          address: locMsg.address || '',
+        };
+        text = '';
+      }
+
+      return { waId, text: text.trim(), location, name: raw.pushName || 'Customer', msgId: raw.key?.id };
+    }
+
+    if (provider === 'wppconnect') {
+      const waId = (raw.from || '').replace('@c.us', '');
+      if (!waId) return null;
+
+      let text = raw.body?.trim() || '';
+      let location = null;
+
+      if (raw.type === 'location' || raw.type === 'live_location') {
+        location = { lat: raw.lat, lng: raw.lng, address: raw.loc || '' };
+        text = '';
+      } else if (raw.type === 'buttons_response' || raw.type === 'list_response') {
+        text = raw.selectedButtonId || raw.selectedRowId || raw.body || '';
+      }
+
+      return { waId, text, location, name: raw.sender?.pushname || 'Customer', msgId: raw.id };
+    }
+  } catch (err) {
+    console.error('Normaliser error:', err.message);
+  }
+  return null;
+};
+
+// ─────────────────────────────────────────────
+// RICH UI SENDERS
+// ─────────────────────────────────────────────
+
+/** Welcome list (Meta) or buttons (Baileys/WPP) */
+const showWelcome = (business, waId) =>
+  sendWelcomeMenu(business, waId);
+
+/** Category picker */
+const showCategories = (business, waId, categories) =>
+  sendWhatsAppList(
     business, waId,
     '🛍️ Shop by Category',
-    'Select a category to browse available products:',
-    'Reply *0* anytime to go back',
+    'Choose a category to browse:',
+    'Reply *0* to go back',
     '📂 Pick Category',
-    [{ title: 'Categories', rows }]
+    [{
+      title: 'Categories', rows: categories.map((c, i) => ({
+        id: `cat_${i}`,
+        title: c.substring(0, 24),
+        description: `Browse ${c} items`,
+      }))
+    }]
   );
-};
 
-/**
- * Send product list — if ≤3 products use buttons, otherwise use list message
- */
-const sendProductList = async (business, waId, products, categoryName) => {
+/** Product list — buttons for ≤3 items, list for more */
+const showProducts = (business, waId, products, catName) => {
   if (products.length <= 3) {
-    // Use button message for small lists
     return sendWhatsAppButtons(
       business, waId,
-      `🍽️ ${categoryName}`,
+      `🍽️ ${catName}`,
       products.map((p, i) =>
-        `*${i + 1}.* ${p.name}\n💰 ₹${p.discountPrice || p.price}${p.description ? `\n_${p.description.substring(0, 60)}_` : ''}`
+        `*${i + 1}.* ${p.name}\n💰 ₹${p.price}${p.description ? `\n_${p.description.substring(0, 60)}_` : ''}`
       ).join('\n\n'),
-      'Tap to add to cart',
-      products.slice(0, 3).map((p, i) => ({
-        id: `item_${i}`,
-        title: p.name.substring(0, 20)
-      }))
+      'Tap a button to add to cart',
+      products.slice(0, 3).map((p, i) => ({ id: `item_${i}`, title: p.name.substring(0, 20) }))
     );
   }
-
-  // Use list message for larger menus
-  const rows = products.map((p, i) => ({
-    id: `item_${i}`,
-    title: p.name.substring(0, 24),
-    description: `₹${p.discountPrice || p.price}${p.description ? ' • ' + p.description.substring(0, 50) : ''}`
-  }));
-
   return sendWhatsAppList(
     business, waId,
-    `🍽️ ${categoryName}`,
-    `Here are the available items in *${categoryName}*.\nTap any item to add it to your cart:`,
+    `🍽️ ${catName}`,
+    `Items available in *${catName}*. Tap to add to cart:`,
     'Reply *0* to go back to categories',
     '🛒 Select Item',
-    [{ title: categoryName, rows }]
+    [{
+      title: catName, rows: products.map((p, i) => ({
+        id: `item_${i}`,
+        title: p.name.substring(0, 24),
+        description: `₹${p.price}${p.description ? ' • ' + p.description.substring(0, 48) : ''}`,
+      }))
+    }]
   );
 };
 
-/**
- * Send cart with action buttons
- */
-const sendCartWithActions = async (business, waId, cart) => {
+/** Cart with action buttons */
+const showCart = (business, waId, cart) => {
   const total = cartTotal(cart);
-  const lines = cart.map((i, idx) =>
-    `${idx + 1}. ${i.name} ×${i.quantity} — ₹${i.price * i.quantity}`
-  ).join('\n');
-
   return sendWhatsAppButtons(
     business, waId,
-    `🛒 Your Cart (₹${total})`,
-    lines || 'Your cart is empty.',
+    `🛒 Your Cart — ₹${total}`,
+    cart.length
+      ? cartSummaryLines(cart)
+      : 'Your cart is empty.',
     'What would you like to do?',
     [
       { id: 'cart_more', title: '➕ Add More Items' },
       { id: 'cart_checkout', title: '✅ Checkout' },
-      { id: 'cart_clear', title: '🗑️ Clear Cart' }
+      { id: 'cart_clear', title: '🗑️ Clear Cart' },
     ]
   );
 };
 
-/**
- * Send delivery type selection
- */
-const sendDeliveryOptions = async (business, waId) => {
+/** Delivery type */
+const showDeliveryOptions = (business, waId) => {
   const fee = business.settings?.deliveryFee ?? 30;
   return sendWhatsAppButtons(
     business, waId,
-    '🚚 Choose Delivery Type',
-    `How would you like to receive your order?\n\n🏠 *Home Delivery* — ₹${fee} delivery charge\n🏪 *Self Pickup* — Free, collect from store`,
-    'Select one option',
+    '🚚 Delivery Type',
+    `🏠 *Home Delivery* — ₹${fee} charge\n🏪 *Self Pickup* — Free`,
+    'Choose one',
     [
       { id: 'delivery_home', title: '🏠 Home Delivery' },
-      { id: 'delivery_pickup', title: '🏪 Self Pickup' }
+      { id: 'delivery_pickup', title: '🏪 Self Pickup' },
     ]
   );
 };
 
-/**
- * Send payment options
- */
-const sendPaymentOptions = async (business, waId, summaryText) => {
+/** Build and show order summary + payment options */
+const showPaymentOptions = async (business, waId, cart, locData, couponData) => {
+  const subtotal = cartTotal(cart);
+  const isDelivery = locData?.type === 'delivery';
+  const fee = business.settings?.deliveryFee ?? 30;
+  const deliveryFee = isDelivery ? fee : 0;
+
+  let discount = 0, couponCode = '';
+  if (couponData) {
+    couponCode = couponData.code;
+    discount = couponData.type === 'percentage'
+      ? (subtotal * couponData.value) / 100
+      : couponData.value;
+    if (couponData.max && discount > couponData.max) discount = couponData.max;
+  }
+
+  const total = subtotal + deliveryFee - discount;
+  const cartLines = cart.map(i => `• ${i.name} ×${i.quantity} = ₹${i.price * i.quantity}`).join('\n');
+  const deliveryTx = isDelivery
+    ? `📍 ${locData.address}`
+    : '🏪 Self Pickup';
+
+  let summary = `🧾 *Order Summary*\n\n${cartLines}\n\n`;
+  summary += `Subtotal : ₹${subtotal}\n`;
+  summary += `Delivery : ₹${deliveryFee}`;
+  if (discount > 0) summary += `\n🎟️ Discount (${couponCode}) : -₹${discount.toFixed(0)}`;
+  summary += `\n\n*💰 Total : ₹${total.toFixed(0)}*`;
+  summary += `\n${deliveryTx}`;
+
   return sendWhatsAppButtons(
     business, waId,
-    '💳 Choose Payment Method',
-    summaryText,
-    'Select how you\'d like to pay',
+    '💳 Choose Payment',
+    summary,
+    'Select payment method',
     [
       { id: 'pay_online', title: '📱 Pay Online (UPI)' },
-      { id: 'pay_cod', title: '💵 Cash on Delivery' }
+      { id: 'pay_cod', title: '💵 Cash on Delivery' },
     ]
   );
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────
 // MAIN HANDLER
-// ═══════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────
 const handleIncomingMessage = async (provider, businessId, rawMsg) => {
   try {
-    console.log('🤖 BOT ENGINE CALLED — provider:', provider, 'businessId:', businessId);
     const parsed = normaliseMessage(provider, rawMsg);
-    console.log('🔄 Normalised message:', JSON.stringify(parsed, null, 2));
-    if (!parsed) {
-      console.log('⚠️ No parsed message — skipping');
-      return;
-    }
+    if (!parsed) return;
 
     const { waId, text, location, name, msgId } = parsed;
-    const lowerText = text.toLowerCase().trim();
-    console.log('📱 waId:', waId, '| text:', text, '| hasLocation:', !!location);
-    // Need text OR location to proceed
+    const lower = text.toLowerCase().trim();
+
+    // Must have text or location
     if (!text && !location) return;
 
-    // ─── Deduplication ───
+    // ── Atomic deduplication (single Redis call) ──
     if (msgId) {
-      const isNew = await redis.setnx(`msg_dedup:${msgId}`, '1');
+      const isNew = await redis.set(K.dedup(msgId), '1', { nx: true, ex: TTL.dedup });
       if (!isNew) return;
-      await redis.expire(`msg_dedup:${msgId}`, 120);
     }
 
-    // ─── Business (cached) ───
-    let business;
-    const cached = await redis.get(`biz:${businessId}`);
-    if (cached) {
-      business = safeParse(cached, null);
-    } else {
+    // ── Load business (cached 5 min) ──
+    let business = safeParse(await redis.get(K.biz(businessId)), null);
+    if (!business) {
       business = await Business.findById(businessId).lean();
-      if (business) await redis.set(`biz:${businessId}`, JSON.stringify(business), { ex: 300 });
+      if (!business) return;
+      await redis.set(K.biz(businessId), JSON.stringify(business), { ex: TTL.biz });
     }
-    if (!business) return;
 
-    // ─── Customer upsert ───
-    let customer = await Customer.findOneAndUpdate(
+    // ── Upsert customer ──
+    const customer = await Customer.findOneAndUpdate(
       { business: businessId, waId },
-      { name: name || 'Customer', phone: waId },
+      { $setOnInsert: { name: name || 'Customer', phone: waId } },
       { upsert: true, new: true }
     );
 
-    // Shorthand reply
+    // Shorthand senders
     const reply = (msg) => sendWhatsAppMessage(business, waId, msg);
     const replyBtns = (...args) => sendWhatsAppButtons(business, waId, ...args);
-    const replyList = (...args) => sendWhatsAppList(business, waId, ...args);
 
-    // ─── Reset trigger keywords ───
-    const resetTriggers = ['hi', 'hello', 'hey', 'menu', 'start', 'hii', 'hai', 'hy'];
-    if (resetTriggers.includes(lowerText)) {
+    // ── Reset triggers ──
+    const resets = ['hi', 'hello', 'hey', 'menu', 'start', 'hii', 'hai'];
+    if (resets.includes(lower)) {
       await clearSession(businessId, waId);
     }
 
-    // ─── Global cancel ───
-    if (lowerText === 'cancel' || lowerText === 'reset') {
+    // ── Global cancel ──
+    if (lower === 'cancel' || lower === 'reset' || lower === '0') {
       await clearSession(businessId, waId);
-      return sendWelcomeMenu(business, waId);
+      await setState(businessId, waId, 'welcome');
+      return showWelcome(business, waId);
     }
 
     let state = await getState(businessId, waId);
 
-    // ═══════════════════════════════════════════
-    // ONBOARDING — collect name if first time
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
+    // ONBOARDING
+    // ══════════════════════════════════════════
     if (state === 'idle' && (!customer.name || customer.name === 'Customer')) {
       await setState(businessId, waId, 'awaiting_name');
-      return reply(`👋 Welcome to *${business.name}*!\n\nBefore we get started, could you tell us your name?`);
+      return reply(`👋 Welcome to *${business.name}*!\n\nWhat's your name?`);
     }
 
     if (state === 'awaiting_name') {
-      if (!text || text.length < 2) return reply('Please type a valid name (at least 2 characters).');
-      customer.name = text;
-      await customer.save();
-      await setState(businessId, waId, 'idle');
-      // Fall through to show welcome
-    }
-
-    // ═══════════════════════════════════════════
-    // IDLE → show welcome menu
-    // ═══════════════════════════════════════════
-    if (state === 'idle' || state === 'awaiting_name') {
+      if (!text || text.length < 2) return reply('Please type a valid name.');
+      await Customer.updateOne({ _id: customer._id }, { name: text });
       await setState(businessId, waId, 'welcome');
-      return sendWelcomeMenu(business, waId);
+      return showWelcome(business, waId);
     }
 
-    // ═══════════════════════════════════════════
-    // WELCOME — main menu selection
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
+    // IDLE / WELCOME
+    // ══════════════════════════════════════════
+    if (state === 'idle') {
+      await setState(businessId, waId, 'welcome');
+      return showWelcome(business, waId);
+    }
+
     if (state === 'welcome') {
-      // Accept both interactive IDs and numeric fallbacks
-      const isBrowse = lowerText === 'menu_browse' || lowerText === '1' || lowerText.includes('browse') || lowerText.includes('menu');
-      const isTrack = lowerText === 'menu_track' || lowerText === '2' || lowerText.includes('track');
-      const isSupport = lowerText === 'menu_support' || lowerText === '3' || lowerText.includes('support') || lowerText.includes('talk');
+      const isBrowse = ['menu_browse', '1', 'browse', 'menu', 'order'].some(k => lower.includes(k));
+      const isTrack = ['menu_track', '2', 'track'].some(k => lower.includes(k));
+      const isSupport = ['menu_support', '3', 'support', 'help', 'talk'].some(k => lower.includes(k));
 
       if (isBrowse) {
         const categories = await Product.distinct('category', { business: businessId, isAvailable: true });
-        if (!categories.length) return reply('😔 Sorry, no products are currently available. Please check back later!');
+        if (!categories.length) return reply('😔 No products available right now. Check back soon!');
 
-        await redis.set(getCatKey(businessId, waId), JSON.stringify(categories), { ex: 3600 });
+        await redis.set(K.cats(businessId, waId), JSON.stringify(categories), { ex: TTL.session });
         await setState(businessId, waId, 'browsing_categories');
-
-        return sendCategoryList(business, waId, categories);
+        return showCategories(business, waId, categories);
 
       } else if (isTrack) {
         const orders = await Order.find({ business: businessId, 'customer.waId': waId })
           .sort({ createdAt: -1 }).limit(3).lean();
 
         if (!orders.length) {
-          return replyBtns(
-            '📦 Order History',
-            'You haven\'t placed any orders yet. Ready to order something delicious?',
-            null,
-            [{ id: 'menu_browse', title: '🛒 Browse Menu' }]
-          );
+          return replyBtns('📦 No Orders Yet', 'You haven\'t placed any orders yet.', null,
+            [{ id: 'menu_browse', title: '🛒 Browse Menu' }]);
         }
 
-        const statusEmoji = { pending: '🕐', confirmed: '✅', preparing: '👨‍🍳', dispatched: '🚚', delivered: '🎉', cancelled: '❌' };
+        const emoji = { pending: '🕐', confirmed: '✅', preparing: '👨‍🍳', dispatched: '🚚', delivered: '🎉', cancelled: '❌' };
         const lines = orders.map(o =>
-          `${statusEmoji[o.status] || '📦'} *${o.orderId}*\nStatus: ${o.status.toUpperCase()} | ₹${o.total}`
+          `${emoji[o.status] || '📦'} *${o.orderId}*\n${o.status.toUpperCase()} — ₹${o.total}`
         ).join('\n\n');
 
-        return replyBtns(
-          '📦 Your Recent Orders',
-          lines,
-          'Showing last 3 orders',
-          [{ id: 'menu_browse', title: '🛒 Order Again' }]
-        );
+        return replyBtns('📦 Recent Orders', lines, 'Last 3 orders',
+          [{ id: 'menu_browse', title: '🛒 Order Again' }]);
 
       } else if (isSupport) {
-        const phone = business.phone || 'our official number';
-        return replyBtns(
-          '💬 Customer Support',
-          `Need help? Our team is here for you!\n\n📞 *Phone:* ${phone}\n\nOr simply describe your issue and we'll get back to you.`,
-          'Tap below to go back to the main menu',
-          [{ id: 'menu_browse', title: '⬅️ Back to Menu' }]
-        );
+        return replyBtns('💬 Support',
+          `📞 *${business.phone || 'Contact us for help'}*\n\nOr describe your issue and we\'ll get back to you.`,
+          null, [{ id: 'menu_browse', title: '⬅️ Back to Menu' }]);
 
       } else {
-        return sendWelcomeMenu(business, waId);
+        return showWelcome(business, waId);
       }
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     // BROWSING CATEGORIES
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     if (state === 'browsing_categories') {
-      const categories = safeParse(await redis.get(getCatKey(businessId, waId)), []);
+      const categories = safeParse(await redis.get(K.cats(businessId, waId)), []);
 
-      // Match by interactive list ID (cat_0, cat_1, ...) OR numeric text OR category name
-      let selectedIdx = -1;
-
-      if (lowerText.startsWith('cat_')) {
-        selectedIdx = parseInt(lowerText.replace('cat_', ''));
-      } else {
-        const num = parseInt(lowerText);
-        if (!isNaN(num) && num > 0 && num <= categories.length) {
-          selectedIdx = num - 1;
-        } else {
-          // Try matching by name
-          selectedIdx = categories.findIndex(c => c.toLowerCase() === lowerText);
-        }
-      }
-
-      if (selectedIdx >= 0 && selectedIdx < categories.length) {
-        const selectedCat = categories[selectedIdx];
-        const products = await Product.find({
-          business: businessId,
-          category: selectedCat,
-          isAvailable: true
-        }).sort({ sortOrder: 1, name: 1 }).lean();
-
-        if (!products.length) {
-          return replyBtns(
-            `📂 ${selectedCat}`,
-            'No items are currently available in this category.',
-            'Please try another category',
-            [{ id: 'back_categories', title: '⬅️ Back to Categories' }]
-          );
-        }
-
-        const itemData = products.map(p => ({
-          _id: p._id,
-          name: p.name,
-          price: p.discountPrice || p.price,
-          images: p.images
-        }));
-        await redis.set(getItemsKey(businessId, waId), JSON.stringify(itemData), { ex: 3600 });
-        await redis.set(`cache:catname:${businessId}:${waId}`, selectedCat, { ex: 3600 });
-        await setState(businessId, waId, 'browsing_items');
-
-        return sendProductList(business, waId, itemData, selectedCat);
-
-      } else if (lowerText === 'back_categories' || lowerText === 'back' || lowerText === '0') {
+      // Back
+      if (['back', '0', 'back_categories'].includes(lower)) {
         await setState(businessId, waId, 'welcome');
-        return sendWelcomeMenu(business, waId);
-      } else {
-        return sendCategoryList(business, waId, categories);
+        return showWelcome(business, waId);
       }
+
+      // Resolve selection: cat_0 / cat_1 OR number OR name match
+      let idx = -1;
+      if (lower.startsWith('cat_')) idx = parseInt(lower.replace('cat_', ''));
+      else if (/^\d+$/.test(lower)) idx = parseInt(lower) - 1;
+      else idx = categories.findIndex(c => c.toLowerCase() === lower);
+
+      if (idx < 0 || idx >= categories.length) return showCategories(business, waId, categories);
+
+      const catName = categories[idx];
+      const products = await Product.find({ business: businessId, category: catName, isAvailable: true })
+        .sort({ sortOrder: 1, name: 1 }).lean();
+
+      if (!products.length) {
+        return replyBtns(`📂 ${catName}`, 'No items available in this category.', null,
+          [{ id: 'back_categories', title: '⬅️ Back' }]);
+      }
+
+      const itemData = products.map(p => ({
+        _id: p._id,
+        name: p.name,
+        price: p.discountPrice || p.price,
+        description: p.description,
+        images: p.images,
+      }));
+
+      await redis.set(K.items(businessId, waId), JSON.stringify(itemData), { ex: TTL.session });
+      await redis.set(K.catName(businessId, waId), catName, { ex: TTL.session });
+      await setState(businessId, waId, 'browsing_items');
+      return showProducts(business, waId, itemData, catName);
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     // BROWSING ITEMS
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     if (state === 'browsing_items') {
-      const items = safeParse(await redis.get(getItemsKey(businessId, waId)), []);
-      const catName = (await redis.get(`cache:catname:${businessId}:${waId}`)) || 'Items';
+      const items = safeParse(await redis.get(K.items(businessId, waId)), []);
+      const catName = (await redis.get(K.catName(businessId, waId))) || 'Items';
 
-      // Match by item_0, item_1, ... OR numeric OR name
-      let selectedIdx = -1;
-
-      if (lowerText.startsWith('item_')) {
-        selectedIdx = parseInt(lowerText.replace('item_', ''));
-      } else {
-        const num = parseInt(lowerText);
-        if (!isNaN(num) && num > 0 && num <= items.length) {
-          selectedIdx = num - 1;
-        } else {
-          selectedIdx = items.findIndex(i => i.name.toLowerCase() === lowerText);
-        }
-      }
-
-      if (lowerText === 'back_categories' || lowerText === 'back' || lowerText === '0') {
-        const categories = safeParse(await redis.get(getCatKey(businessId, waId)), []);
-        if (!categories || categories.length === 0) {
-          await setState(businessId, waId, 'welcome');
-          return sendWelcomeMenu(business, waId);
-        }
+      // Back to categories
+      if (['back', '0', 'back_categories'].includes(lower)) {
+        const categories = safeParse(await redis.get(K.cats(businessId, waId)), []);
         await setState(businessId, waId, 'browsing_categories');
-        return sendCategoryList(business, waId, categories);
+        return categories.length
+          ? showCategories(business, waId, categories)
+          : showWelcome(business, waId);
       }
 
-      if (lowerText === 'view_cart' || lowerText === 'cart') {
+      // View cart shortcut
+      if (['cart', 'view_cart', 'my cart'].includes(lower)) {
         const cart = await getCart(businessId, waId);
         if (!cart.length) return reply('🛒 Your cart is empty. Select an item to add!');
         await setState(businessId, waId, 'item_added');
-        return sendCartWithActions(business, waId, cart);
+        return showCart(business, waId, cart);
       }
 
-      if (selectedIdx >= 0 && selectedIdx < items.length) {
-        const selected = items[selectedIdx];
-        const cart = await getCart(businessId, waId);
+      // Resolve item selection
+      let idx = -1;
+      if (lower.startsWith('item_')) idx = parseInt(lower.replace('item_', ''));
+      else if (/^\d+$/.test(lower)) idx = parseInt(lower) - 1;
+      else idx = items.findIndex(i => i.name.toLowerCase() === lower);
 
-        const existing = cart.find(i => i.productId === selected._id.toString());
-        if (existing) existing.quantity += 1;
-        else cart.push({ productId: selected._id.toString(), name: selected.name, price: selected.price, quantity: 1 });
+      if (idx < 0 || idx >= items.length) return showProducts(business, waId, items, catName);
 
-        await saveCart(businessId, waId, cart);
-        await setState(businessId, waId, 'item_added');
+      // Add to cart
+      const selected = items[idx];
+      const cart = await getCart(businessId, waId);
+      const existing = cart.find(i => i.productId === selected._id.toString());
 
-        const total = cartTotal(cart);
-        const itemCount = cart.reduce((s, i) => s + i.quantity, 0);
-        const caption = `✅ *${selected.name}* added to cart!\n\n🛒 *${itemCount} item${itemCount > 1 ? 's' : ''}* in cart — Total: *₹${total}*`;
+      if (existing) existing.quantity += 1;
+      else cart.push({
+        productId: selected._id.toString(),
+        name: selected.name,
+        price: selected.price,
+        quantity: 1,
+      });
 
-        // Try to send product image
-        const fullProduct = await Product.findById(selected._id).lean();
-        if (fullProduct?.images?.[0]?.url) {
-          await sendProductImage(business, waId, fullProduct, caption);
-        }
+      await saveCart(businessId, waId, cart);
+      await setState(businessId, waId, 'item_added');
 
-        // Always follow up with action buttons
-        return replyBtns(
-          null,
-          'What would you like to do next?',
-          null,
-          [
-            { id: 'cart_more', title: '➕ Add More Items' },
-            { id: 'view_cart', title: '🛒 View Cart' },
-            { id: 'cart_checkout', title: '✅ Checkout' }
-          ]
-        );
+      const total = cartTotal(cart);
+      const itemCount = cart.reduce((s, i) => s + i.quantity, 0);
+      const caption = `✅ *${selected.name}* added!\n🛒 ${itemCount} item${itemCount > 1 ? 's' : ''} — Total: *₹${total}*`;
+
+      // Send product image if available
+      if (selected.images?.[0]?.url) {
+        await sendProductImage(business, waId, selected, caption);
       } else {
-        return sendProductList(business, waId, items, catName);
+        await reply(caption);
       }
+
+      // Follow-up action buttons
+      return replyBtns(
+        null,
+        'What would you like to do next?',
+        null,
+        [
+          { id: 'cart_more', title: '➕ Add More' },
+          { id: 'view_cart', title: '🛒 View Cart' },
+          { id: 'cart_checkout', title: '✅ Checkout' },
+        ]
+      );
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     // ITEM ADDED — post-add actions
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     if (state === 'item_added') {
       const cart = await getCart(businessId, waId);
 
-      if (lowerText === 'cart_more' || lowerText === '1' || lowerText.includes('add more')) {
-        const categories = safeParse(await redis.get(getCatKey(businessId, waId)), []);
-        if (categories.length) {
-          await setState(businessId, waId, 'browsing_categories');
-          return sendCategoryList(business, waId, categories);
-        }
-        await setState(businessId, waId, 'welcome');
-        return sendWelcomeMenu(business, waId);
+      const isMore = ['cart_more', '1', 'add more', 'more'].some(k => lower.includes(k));
+      const isViewCart = ['view_cart', '2', 'cart', 'view cart'].some(k => lower.includes(k));
+      const isCheckout = ['cart_checkout', '3', 'checkout'].some(k => lower.includes(k));
+      const isClear = ['cart_clear', 'clear'].some(k => lower.includes(k));
 
-      } else if (lowerText === 'view_cart' || lowerText === '2' || lowerText.includes('view cart') || lowerText.includes('cart')) {
-        return sendCartWithActions(business, waId, cart);
+      if (isMore) {
+        const categories = safeParse(await redis.get(K.cats(businessId, waId)), []);
+        await setState(businessId, waId, 'browsing_categories');
+        return categories.length
+          ? showCategories(business, waId, categories)
+          : showWelcome(business, waId);
 
-      } else if (lowerText === 'cart_checkout' || lowerText === '3' || lowerText.includes('checkout')) {
+      } else if (isViewCart) {
+        return showCart(business, waId, cart);
+
+      } else if (isCheckout) {
         if (!cart.length) return reply('🛒 Your cart is empty!');
         await setState(businessId, waId, 'checkout_delivery');
-        return sendDeliveryOptions(business, waId);
+        return showDeliveryOptions(business, waId);
 
-      } else if (lowerText === 'cart_clear' || lowerText.includes('clear')) {
-        await redis.del(getCartKey(businessId, waId));
-        return replyBtns(
-          '🗑️ Cart Cleared',
-          'Your cart has been cleared. Start fresh!',
-          null,
-          [{ id: 'menu_browse', title: '🛒 Browse Menu' }]
-        );
+      } else if (isClear) {
+        await redis.del(K.cart(businessId, waId));
+        return replyBtns('🗑️ Cart Cleared', 'Start fresh!', null,
+          [{ id: 'menu_browse', title: '🛒 Browse Menu' }]);
+
       } else {
-        return sendCartWithActions(business, waId, cart);
+        return showCart(business, waId, cart);
       }
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     // CHECKOUT — DELIVERY TYPE
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     if (state === 'checkout_delivery') {
-      const isDelivery = lowerText === 'delivery_home' || lowerText === '1' || lowerText.includes('home') || lowerText.includes('delivery');
-      const isPickup = lowerText === 'delivery_pickup' || lowerText === '2' || lowerText.includes('pickup') || lowerText.includes('self');
+      const isHome = ['delivery_home', '1', 'home', 'delivery'].some(k => lower.includes(k));
+      const isPickup = ['delivery_pickup', '2', 'pickup', 'self'].some(k => lower.includes(k));
 
-      if (isDelivery) {
+      if (isHome) {
         await setState(businessId, waId, 'checkout_address');
         return sendLocationRequest(business, waId);
 
       } else if (isPickup) {
-        await setLocation(businessId, waId, { type: 'pickup', address: 'Self Pickup' });
+        await setLoc(businessId, waId, { type: 'pickup', address: 'Self Pickup' });
         await setState(businessId, waId, 'checkout_coupon');
         return replyBtns(
           '🎟️ Discount Coupon',
-          'Do you have a discount coupon code?\n\nType your code below, or tap *Skip* if you don\'t have one.',
+          'Have a discount coupon? Type the code below, or tap Skip.',
           null,
-          [{ id: 'coupon_skip', title: '⏭️ Skip Coupon' }]
+          [{ id: 'coupon_skip', title: '⏭️ Skip' }]
         );
       } else {
-        return sendDeliveryOptions(business, waId);
+        return showDeliveryOptions(business, waId);
       }
     }
 
-    // ═══════════════════════════════════════════
-    // CHECKOUT — ADDRESS (location or text)
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
+    // CHECKOUT — ADDRESS INPUT
+    // ══════════════════════════════════════════
     if (state === 'checkout_address') {
-      // User tapped "Type Address" button
-      if (lowerText === 'type_address_manually') {
-        return reply('✏️ Please type your full delivery address:');
-      }
-
-      if (!text && !location) {
-        return sendLocationRequest(business, waId);
-      }
-
-      let addrStr = '';
+      if (!text && !location) return sendLocationRequest(business, waId);
 
       if (location) {
-        // Shared location pin (live or current)
-        let fullAddress = location.address || '';
-        if (!fullAddress && location.lat && location.lng) {
-          fullAddress = await reverseGeocode(location.lat, location.lng);
-        }
-        addrStr = fullAddress || `📍 Lat: ${location.lat}, Lng: ${location.lng}`;
-        await setLocation(businessId, waId, { ...location, address: addrStr, type: 'delivery' });
+        let addr = location.address || '';
+        if (!addr) addr = await reverseGeocode(location.lat, location.lng);
+        addr = addr || `📍 ${location.lat}, ${location.lng}`;
 
-        // Confirm the detected address with user
-        await replyBtns(
-          '📍 Location Received',
-          `We detected your address as:\n\n*${addrStr}*\n\nIs this correct?`,
+        await setLoc(businessId, waId, { ...location, address: addr, type: 'delivery' });
+        await setState(businessId, waId, 'confirm_address');
+
+        return replyBtns(
+          '📍 Confirm Address',
+          `We detected:\n\n*${addr}*\n\nIs this correct?`,
           null,
           [
-            { id: 'addr_confirm', title: '✅ Yes, Confirm' },
-            { id: 'addr_retype', title: '✏️ Enter Manually' }
+            { id: 'addr_confirm', title: '✅ Confirm' },
+            { id: 'addr_retype', title: '✏️ Type Manually' },
           ]
         );
-        await setState(businessId, waId, 'confirm_address');
-        return;
-
-      } else if (text) {
-        // Manually typed address
-        addrStr = text;
-        await setLocation(businessId, waId, { address: addrStr, type: 'delivery' });
-        await setState(businessId, waId, 'checkout_coupon');
-        return replyBtns(
-          '🎟️ Discount Coupon',
-          `📍 *Address saved:* ${addrStr}\n\nDo you have a discount coupon code?`,
-          null,
-          [{ id: 'coupon_skip', title: '⏭️ Skip Coupon' }]
-        );
       }
+
+      // Typed address
+      await setLoc(businessId, waId, { address: text, type: 'delivery' });
+      await setState(businessId, waId, 'checkout_coupon');
+      return replyBtns(
+        '🎟️ Discount Coupon',
+        `📍 *Saved:* ${text}\n\nHave a discount coupon? Type the code or tap Skip.`,
+        null,
+        [{ id: 'coupon_skip', title: '⏭️ Skip' }]
+      );
     }
 
-    // ═══════════════════════════════════════════
-    // CONFIRM ADDRESS (after location pin)
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
+    // CHECKOUT — CONFIRM ADDRESS
+    // ══════════════════════════════════════════
     if (state === 'confirm_address') {
-      if (lowerText === 'addr_confirm' || lowerText === 'yes' || lowerText.includes('confirm')) {
+      const isConfirm = ['addr_confirm', 'yes', 'confirm', '1'].some(k => lower.includes(k));
+      const isRetype = ['addr_retype', 'no', 'manual', '2'].some(k => lower.includes(k));
+
+      if (isConfirm) {
         await setState(businessId, waId, 'checkout_coupon');
         return replyBtns(
           '🎟️ Discount Coupon',
-          'Do you have a discount coupon code?\n\nType your code below, or tap *Skip*.',
+          'Have a coupon code? Type it below or tap Skip.',
           null,
-          [{ id: 'coupon_skip', title: '⏭️ Skip Coupon' }]
+          [{ id: 'coupon_skip', title: '⏭️ Skip' }]
         );
-      } else if (lowerText === 'addr_retype' || lowerText === 'no' || lowerText.includes('manual')) {
+      } else if (isRetype) {
         await setState(businessId, waId, 'checkout_address');
         return reply('✏️ Please type your full delivery address:');
       } else {
-        const locData = await getLocation(businessId, waId);
+        const locData = await getLoc(businessId, waId);
         return replyBtns(
           '📍 Confirm Address',
-          `Detected address:\n*${locData?.address || 'Unknown'}*\n\nIs this correct?`,
+          `Detected:\n*${locData?.address || 'Unknown'}*\n\nIs this correct?`,
           null,
           [
-            { id: 'addr_confirm', title: '✅ Yes, Confirm' },
-            { id: 'addr_retype', title: '✏️ Enter Manually' }
+            { id: 'addr_confirm', title: '✅ Confirm' },
+            { id: 'addr_retype', title: '✏️ Type Manually' },
           ]
         );
       }
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     // CHECKOUT — COUPON
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     if (state === 'checkout_coupon') {
       const cart = await getCart(businessId, waId);
       const subtotal = cartTotal(cart);
+      const isSkip = ['coupon_skip', 'skip', 'no', 'none'].includes(lower);
 
-      const isSkip = lowerText === 'coupon_skip' || lowerText === 'skip' || lowerText === 'no';
-
-      let discount = 0;
-      let couponCode = '';
-      let couponApplied = false;
+      let couponData = null;
 
       if (!isSkip) {
         const coupon = await Coupon.findOne({
           business: businessId,
           code: text.toUpperCase(),
-          isActive: true
+          isActive: true,
         });
 
         if (!coupon) {
-          return replyBtns(
-            '❌ Invalid Coupon',
-            `The coupon code *${text.toUpperCase()}* is not valid or has expired.\n\nTry another code, or skip.`,
-            null,
-            [{ id: 'coupon_skip', title: '⏭️ Skip Coupon' }]
-          );
+          return replyBtns('❌ Invalid Coupon',
+            `*${text.toUpperCase()}* is not valid or expired. Try another or skip.`,
+            null, [{ id: 'coupon_skip', title: '⏭️ Skip' }]);
         }
 
-        if (subtotal < coupon.minOrderValue) {
-          return replyBtns(
-            '⚠️ Minimum Order Not Met',
-            `This coupon requires a minimum order of *₹${coupon.minOrderValue}*.\nYour subtotal is ₹${subtotal}.\n\nAdd more items or skip.`,
+        if (subtotal < (coupon.minOrderValue || 0)) {
+          return replyBtns('⚠️ Min Order Not Met',
+            `This coupon needs a min order of ₹${coupon.minOrderValue}.\nYour subtotal: ₹${subtotal}.`,
             null,
             [
               { id: 'cart_more', title: '➕ Add Items' },
-              { id: 'coupon_skip', title: '⏭️ Skip Coupon' }
-            ]
-          );
+              { id: 'coupon_skip', title: '⏭️ Skip' },
+            ]);
         }
 
-        couponCode = coupon.code;
-        discount = coupon.discountType === 'percentage'
-          ? (subtotal * coupon.discountValue) / 100
-          : coupon.discountValue;
-        if (coupon.maxDiscount && discount > coupon.maxDiscount) discount = coupon.maxDiscount;
-        couponApplied = true;
-
-        await redis.set(getCouponKey(businessId, waId), JSON.stringify({
+        couponData = {
           code: coupon.code,
           type: coupon.discountType,
           value: coupon.discountValue,
-          max: coupon.maxDiscount
-        }), { ex: 3600 });
+          max: coupon.maxDiscount,
+        };
+        await redis.set(K.coupon(businessId, waId), JSON.stringify(couponData), { ex: TTL.session });
       }
 
-      // Build order summary
-      const locData = await getLocation(businessId, waId);
-      const isDelivery = locData?.type === 'delivery';
-      const fee = business.settings?.deliveryFee ?? 30;
-      const deliveryFee = isDelivery ? fee : 0;
-      const total = subtotal + deliveryFee - discount;
-
-      const cartLines = cart.map(i => `• ${i.name} ×${i.quantity} = ₹${i.price * i.quantity}`).join('\n');
-
-      let summaryText = `🧾 *Order Summary*\n\n${cartLines}\n\n`;
-      summaryText += `Subtotal: ₹${subtotal}\n`;
-      summaryText += `Delivery: ₹${deliveryFee}`;
-      if (couponApplied) summaryText += `\n🎟️ Discount (${couponCode}): -₹${discount.toFixed(0)}`;
-      summaryText += `\n\n*💰 Total: ₹${total.toFixed(0)}*`;
-      summaryText += `\n📍 ${locData?.address || 'Self Pickup'}`;
-
+      const locData = await getLoc(businessId, waId);
       await setState(businessId, waId, 'checkout_payment');
-
-      return sendPaymentOptions(business, waId, summaryText);
+      return showPaymentOptions(business, waId, cart, locData, couponData);
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     // CHECKOUT — PAYMENT
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════
     if (state === 'checkout_payment') {
-      const cart = await getCart(businessId, waId);
-      if (!cart.length) {
-        await setState(businessId, waId, 'idle');
-        return reply('⏰ Your cart has expired. Let\'s start over!');
-      }
-
-      const isOnline = lowerText === 'pay_online' || lowerText === '1' || lowerText.includes('online') || lowerText.includes('upi');
-      const isCOD = lowerText === 'pay_cod' || lowerText === '2' || lowerText.includes('cash') || lowerText.includes('cod');
+      const isOnline = ['pay_online', '1', 'online', 'upi', 'pay'].some(k => lower.includes(k));
+      const isCOD = ['pay_cod', '2', 'cash', 'cod'].some(k => lower.includes(k));
 
       if (!isOnline && !isCOD) {
-        const locData = await getLocation(businessId, waId);
-        const subtotal = cartTotal(cart);
-        const isDelivery = locData?.type === 'delivery';
-        const fee = business.settings?.deliveryFee ?? 30;
-        const deliveryFee = isDelivery ? fee : 0;
-        const couponRaw = await redis.get(getCouponKey(businessId, waId));
-        let discount = 0;
-        if (couponRaw) {
-          const c = JSON.parse(couponRaw);
-          discount = c.type === 'percentage' ? (subtotal * c.value) / 100 : c.value;
-          if (c.max && discount > c.max) discount = c.max;
-        }
-        const total = subtotal + deliveryFee - discount;
-        return sendPaymentOptions(business, waId, `💰 *Total: ₹${total.toFixed(0)}*\n\nChoose payment method:`);
+        // Re-show payment options
+        const cart = await getCart(businessId, waId);
+        const locData = await getLoc(businessId, waId);
+        const cpnRaw = await redis.get(K.coupon(businessId, waId));
+        return showPaymentOptions(business, waId, cart, locData, safeParse(cpnRaw, null));
       }
 
-      // ── Process Order ──
-      const locData = await getLocation(businessId, waId);
+      const cart = await getCart(businessId, waId);
+      if (!cart.length) {
+        await clearSession(businessId, waId);
+        return reply('⏰ Cart expired. Send *hi* to start again.');
+      }
+
+      const locData = await getLoc(businessId, waId);
       const subtotal = cartTotal(cart);
       const isDelivery = locData?.type === 'delivery';
       const fee = business.settings?.deliveryFee ?? 30;
       const deliveryFee = isDelivery ? fee : 0;
 
-      let discount = 0;
-      let couponCode = '';
-      const couponRaw = await redis.get(getCouponKey(businessId, waId));
-      if (couponRaw) {
-        const c = JSON.parse(couponRaw);
-        couponCode = c.code;
-        discount = c.type === 'percentage' ? (subtotal * c.value) / 100 : c.value;
-        if (c.max && discount > c.max) discount = c.max;
+      const cpnRaw = await redis.get(K.coupon(businessId, waId));
+      const cpnData = safeParse(cpnRaw, null);
+      let discount = 0, couponCode = '';
+
+      if (cpnData) {
+        couponCode = cpnData.code;
+        discount = cpnData.type === 'percentage'
+          ? (subtotal * cpnData.value) / 100
+          : cpnData.value;
+        if (cpnData.max && discount > cpnData.max) discount = cpnData.max;
       }
 
       const total = subtotal + deliveryFee - discount;
 
+      // Create order
       const order = await Order.create({
         business: businessId,
         orderId: generateOrderId(),
@@ -1343,27 +2187,29 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
           name: i.name,
           price: i.price,
           quantity: i.quantity,
-          total: i.price * i.quantity
+          total: i.price * i.quantity,
         })),
         subtotal,
         deliveryCharge: deliveryFee,
         discount,
         couponCode,
         total,
-        deliveryAddress: locData?.address || (isDelivery ? 'Location Pin' : 'Self Pickup'),
+        deliveryAddress: locData?.address || 'Self Pickup',
         deliveryType: isDelivery ? 'delivery' : 'pickup',
         paymentMethod: isOnline ? 'online' : 'cod',
         status: 'pending',
-        statusHistory: [{ status: 'pending' }],
+        statusHistory: [{ status: 'pending', timestamp: new Date() }],
       });
 
+      // Update customer stats
       await Customer.updateOne(
-        { business: businessId, waId },
+        { _id: customer._id },
         { $inc: { totalOrders: 1, totalSpent: total }, $set: { lastOrderAt: new Date() } }
       );
 
+      // Increment coupon usage
       if (couponCode) {
-        await Coupon.findOneAndUpdate(
+        await Coupon.updateOne(
           { business: businessId, code: couponCode },
           { $inc: { usedCount: 1 } }
         );
@@ -1371,26 +2217,28 @@ const handleIncomingMessage = async (provider, businessId, rawMsg) => {
 
       await clearSession(businessId, waId);
 
+      // Send payment link first if online
       if (isOnline) {
-        // Send payment link first, then confirmation
-        await reply(`🔗 *Payment Link:*\nhttps://rzp.io/i/dummy${order.orderId}\n\n_Complete payment within 10 minutes to confirm your order._`);
+        await reply(
+          `🔗 *Payment Link:*\nhttps://rzp.io/i/${order.orderId}\n\n_Complete payment within 10 minutes._`
+        );
       }
 
       return replyBtns(
-        `🎉 Order Placed!`,
-        `Your order *#${order.orderId}* has been placed successfully!\n\n⏱️ Estimated time: *30–40 minutes*\n\nThank you for ordering from *${business.name}*! 🙏`,
-        'Reply "hi" anytime to order again',
-        [{ id: 'menu_track', title: '📦 Track My Order' }]
+        '🎉 Order Placed!',
+        `*#${order.orderId}* confirmed!\n\n⏱️ ETA: 30–40 min\n\nThank you for ordering from *${business.name}*! 🙏`,
+        'Send *hi* anytime to order again',
+        [{ id: 'menu_track', title: '📦 Track Order' }]
       );
     }
 
-    // ─── Default fallback ───
+    // ── Fallback ──
     await clearSession(businessId, waId);
     await setState(businessId, waId, 'welcome');
-    return sendWelcomeMenu(business, waId);
+    return showWelcome(business, waId);
 
   } catch (err) {
-    console.error('BOT ERROR:', err);
+    console.error('BOT ERROR:', err.message, err.stack);
   }
 };
 
