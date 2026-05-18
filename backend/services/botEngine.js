@@ -795,12 +795,17 @@ const sendPaymentOptions = async (business, waId, summaryText) => {
 // ═══════════════════════════════════════════════════════════════════
 const handleIncomingMessage = async (provider, businessId, rawMsg) => {
   try {
+    console.log('🤖 BOT ENGINE CALLED — provider:', provider, 'businessId:', businessId);
     const parsed = normaliseMessage(provider, rawMsg);
-    if (!parsed) return;
+    console.log('🔄 Normalised message:', JSON.stringify(parsed, null, 2));
+    if (!parsed) {
+      console.log('⚠️ No parsed message — skipping');
+      return;
+    }
 
     const { waId, text, location, name, msgId } = parsed;
     const lowerText = text.toLowerCase().trim();
-
+    console.log('📱 waId:', waId, '| text:', text, '| hasLocation:', !!location);
     // Need text OR location to proceed
     if (!text && !location) return;
 
